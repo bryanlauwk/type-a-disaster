@@ -1,6 +1,7 @@
 import { ClientOnly, createFileRoute } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import {
+  ChevronUp,
   FastForward,
   FlipVertical2,
   Loader2,
@@ -159,13 +160,13 @@ const newSeed = () => Math.floor(Math.random() * 2 ** 31);
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "bad" | "good" }) {
   return (
-    <div className="border border-ink/25 bg-paper/85 px-2 py-1 backdrop-blur-sm">
-      <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
+    <div className="min-w-0 border border-ink/25 bg-paper/85 px-1.5 py-0.5 backdrop-blur-sm sm:px-2 sm:py-1">
+      <div className="truncate font-mono text-[8px] uppercase tracking-wider text-muted-foreground sm:text-[9px] sm:tracking-widest">
         {label}
       </div>
       <div
         className={cn(
-          "font-mono text-sm font-semibold tabular-nums",
+          "truncate font-mono text-xs font-semibold tabular-nums sm:text-sm",
           tone === "bad" && "text-stamp",
           tone === "good" && "text-leaf",
         )}
@@ -182,6 +183,12 @@ function Index() {
   const [paused, setPaused] = useState(false);
   const [fast, setFast] = useState(false);
   const [labels, setLabels] = useState(true);
+  // On phones the Courier folds down to its latest headline until tapped.
+  const [paperOpen, setPaperOpen] = useState(false);
+  // Landmark labels crowd a phone screen; start with them off there.
+  useEffect(() => {
+    if (window.innerWidth < 640) setLabels(false);
+  }, []);
   // Looking at the Upside Down instead of the town.
   const [upsideDown, setUpsideDown] = useState(false);
   const [credits, setCredits] = useState<Credits>({ credits: MAX_CREDITS, since: 0 });
@@ -517,7 +524,7 @@ function Index() {
   return (
     <div className="flex h-dvh flex-col bg-paper text-ink lg:flex-row">
       <Toaster position="top-center" />
-      <main className="relative min-h-[56dvh] flex-1 overflow-hidden lg:min-h-0">
+      <main className="relative min-h-[30dvh] flex-1 overflow-hidden lg:min-h-0">
         <div className="absolute inset-0">
           <ClientOnly fallback={<SceneFallback />}>
             <Suspense fallback={<SceneFallback />}>
@@ -541,12 +548,12 @@ function Index() {
         </div>
 
         {/* Masthead + stats */}
-        <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start justify-between gap-2 p-3">
-          <div className="pointer-events-auto border-2 border-ink bg-paper/90 px-3 py-1.5 backdrop-blur-sm">
-            <p className="font-mono text-[9px] uppercase tracking-[0.3em] text-muted-foreground">
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap items-start justify-between gap-1.5 p-2 sm:gap-2 sm:p-3">
+          <div className="pointer-events-auto border-2 border-ink bg-paper/90 px-2 py-1 backdrop-blur-sm sm:px-3 sm:py-1.5">
+            <p className="hidden font-mono text-[9px] uppercase tracking-[0.3em] text-muted-foreground sm:block">
               Type-a-Disaster
             </p>
-            <h1 className="font-serif-d text-lg font-black leading-tight">
+            <h1 className="font-serif-d text-base font-black leading-tight sm:text-lg">
               {city?.name ?? "Loading…"}
             </h1>
             <p className="font-mono text-[10px] text-muted-foreground">
@@ -559,7 +566,7 @@ function Index() {
             )}
           </div>
           {st && (
-            <div className="pointer-events-auto grid grid-cols-3 gap-1 sm:grid-cols-6">
+            <div className="pointer-events-auto grid w-full grid-cols-6 gap-1 sm:w-auto">
               <Stat label="Pop." value={compact(st.population)} />
               <Stat
                 label="Mood"
@@ -591,7 +598,7 @@ function Index() {
         </div>
 
         {/* Controls */}
-        <div className="absolute right-3 top-44 flex flex-col gap-1 sm:top-20">
+        <div className="absolute right-2 top-[6.75rem] z-10 flex flex-col gap-1 sm:right-3 sm:top-20 [&_button]:size-8 sm:[&_button]:size-9">
           <Button
             size="icon"
             variant="outline"
@@ -667,7 +674,7 @@ function Index() {
         </div>
 
         {shared && (
-          <div className="absolute left-3 right-16 top-44 border-2 border-ink bg-paper/95 p-2 text-sm sm:top-20 sm:max-w-sm">
+          <div className="absolute left-2 right-14 top-[6.75rem] z-10 border-2 border-ink bg-paper/95 p-2 text-sm sm:left-3 sm:right-16 sm:top-20 sm:max-w-sm">
             You're reading someone else's town. Type an event to take it over, or{" "}
             <button className="underline" onClick={newCity}>
               start your own
@@ -677,9 +684,9 @@ function Index() {
         )}
 
         {/* Event input */}
-        <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4">
-          <div className="mx-auto max-w-2xl border-2 border-ink bg-paper/95 p-3 shadow-[5px_5px_0_0_var(--ink)] backdrop-blur-md">
-            <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="absolute inset-x-0 bottom-0 z-10 p-2 sm:p-4">
+          <div className="mx-auto max-w-2xl border-2 border-ink bg-paper/95 p-2 shadow-[4px_4px_0_0_var(--ink)] backdrop-blur-md sm:p-3 sm:shadow-[5px_5px_0_0_var(--ink)]">
+            <div className="mb-2 hidden items-center justify-between gap-2 sm:flex">
               <div>
                 <p className="font-mono text-[9px] uppercase tracking-[0.24em] text-stamp">
                   Your dispatch · Maple Hollow, October ’85
@@ -709,16 +716,19 @@ function Index() {
                   }
                 }}
                 rows={2}
-                placeholder="A strange thing happens somewhere in town…"
-                className="min-h-12 min-w-0 flex-1 resize-none bg-white/55 px-3 py-2 font-serif-d text-base leading-snug outline-none ring-1 ring-inset ring-ink/20 transition focus:ring-2 focus:ring-stamp placeholder:text-ink/40 disabled:opacity-60"
+                placeholder="What happens next in Maple Hollow?"
+                className="min-h-10 min-w-0 flex-1 resize-none bg-white/55 px-3 py-2 font-serif-d text-base leading-snug outline-none ring-1 ring-inset ring-ink/20 transition focus:ring-2 focus:ring-stamp placeholder:text-ink/40 disabled:opacity-60"
               />
               <Button
                 type="submit"
                 disabled={busy || holding || !city || input.trim().length < 3}
-                className="h-12 shrink-0 rounded-none bg-stamp px-3 text-paper shadow-[2px_2px_0_0_var(--ink)] hover:bg-stamp/90 active:translate-x-px active:translate-y-px active:shadow-none sm:px-4"
+                aria-label={busy ? "On deadline" : holding ? "Live" : "Make it happen"}
+                className="h-10 shrink-0 rounded-none bg-stamp px-3 text-paper shadow-[2px_2px_0_0_var(--ink)] hover:bg-stamp/90 active:translate-x-px active:translate-y-px active:shadow-none sm:px-4"
               >
                 {busy ? <Loader2 className="animate-spin" /> : <Send />}
-                <span>{busy ? "On deadline…" : holding ? "Live…" : "Make it happen"}</span>
+                <span className="hidden sm:inline">
+                  {busy ? "On deadline…" : holding ? "Live…" : "Make it happen"}
+                </span>
               </Button>
             </form>
             {busy ? (
@@ -741,7 +751,13 @@ function Index() {
                 Breaking · Watch the event unfold above
               </p>
             ) : null}
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-dashed border-ink/25 pt-2">
+            <div
+              className={cn(
+                "mt-2 flex flex-nowrap items-center gap-x-3 gap-y-2 border-t border-dashed border-ink/25 pt-2 sm:flex-wrap",
+                // While an event plays on a phone, get out of the way of the view.
+                (busy || holding) && "hidden sm:flex",
+              )}
+            >
               <div
                 className="flex items-center gap-1.5"
                 title="Event credits: minor events cost 1, citywide 2, apocalyptic 3"
@@ -755,8 +771,9 @@ function Index() {
                     )}
                   />
                 ))}
-                <span className="ml-1 font-mono text-[10px] text-muted-foreground">
-                  {c.credits}/{MAX_CREDITS} dispatch credits
+                <span className="ml-1 whitespace-nowrap font-mono text-[10px] text-muted-foreground">
+                  {c.credits}/{MAX_CREDITS}
+                  <span className="hidden sm:inline"> dispatch credits</span>
                   {c.credits < MAX_CREDITS ? ` · +1 in ${nextIn}m` : " · full"}
                 </span>
               </div>
@@ -783,7 +800,7 @@ function Index() {
                 ))}
               </div>
             </div>
-            <p className="mt-1.5 px-0.5 font-mono text-[9px] text-muted-foreground">
+            <p className="mt-1.5 hidden px-0.5 font-mono text-[9px] text-muted-foreground sm:block">
               Be specific about where it happens. Big events can use up to 3 credits. Enter to file
               · Shift+Enter for a new line.
             </p>
@@ -791,8 +808,32 @@ function Index() {
         </div>
       </main>
 
-      <aside className="max-h-[44dvh] overflow-y-auto border-t-2 border-ink bg-newsprint lg:max-h-none lg:w-[400px] lg:border-l-2 lg:border-t-0">
-        {city && <Newspaper city={city} />}
+      <aside
+        className={cn(
+          "border-t-2 border-ink bg-newsprint lg:max-h-none lg:w-[400px] lg:overflow-y-auto lg:border-l-2 lg:border-t-0",
+          paperOpen && "max-h-[70dvh] overflow-y-auto",
+        )}
+      >
+        {/* Phones: a folded paper showing the latest headline. */}
+        <button
+          type="button"
+          onClick={() => setPaperOpen((o) => !o)}
+          aria-expanded={paperOpen}
+          className="sticky top-0 z-10 flex w-full items-center gap-2 border-b border-ink/20 bg-newsprint px-3 py-2 text-left lg:hidden"
+        >
+          <span className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.2em] text-stamp">
+            Courier
+          </span>
+          <span className="min-w-0 flex-1 truncate font-serif-d text-sm font-bold">
+            {city?.log[city.log.length - 1]?.result.headline ?? "Nothing to report. Yet."}
+          </span>
+          <ChevronUp
+            className={cn("size-4 shrink-0 transition-transform", paperOpen && "rotate-180")}
+          />
+        </button>
+        <div className={cn(!paperOpen && "hidden", "lg:block")}>
+          {city && <Newspaper city={city} />}
+        </div>
       </aside>
 
       <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
