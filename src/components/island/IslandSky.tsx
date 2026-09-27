@@ -186,12 +186,12 @@ export function IslandSky({
       sunDir.copy(sun.current.position).sub(tgt).normalize();
       env.sunDir = sunDir;
       sun.current.target.updateMatrixWorld();
-      const ext = Math.round(Math.min(72, Math.max(20, camDist * 0.6)) / 4) * 4;
+      const ext = Math.round(Math.min(110, Math.max(20, camDist * 0.8)) / 4) * 4;
       const sc2 = sun.current.shadow.camera;
       if (sc2.right !== ext) {
         sc2.left = sc2.bottom = -ext;
         sc2.right = sc2.top = ext;
-        sc2.far = 260;
+        sc2.far = 400;
         sc2.updateProjectionMatrix();
       }
       sun.current.intensity =
@@ -249,7 +249,8 @@ export function IslandSky({
           c.setMatrixAt(k * 3 + lobe, m);
         }
       });
-      c.count = raining || w.ash ? cloudSpots.length * 3 : 16 * 3;
+      // The photographed sky carries the clouds; these banks only roll in with ash.
+      c.count = w.ash ? cloudSpots.length * 3 : 0;
       c.instanceMatrix.needsUpdate = true;
     }
   });

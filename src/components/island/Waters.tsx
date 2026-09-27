@@ -53,6 +53,8 @@ const WAVES = /* glsl */ `
 uniform float uTime;
 uniform sampler2D uHeight;
 uniform vec4 uDraw;   // x, z, reach, amount
+uniform float uOuter;
+uniform float uNearHalf;
 float groundAt(vec2 p) {
   vec2 uv = (p + ${HALF.toFixed(1)}) / ${SIZE.toFixed(1)};
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return -6.0;
@@ -87,6 +89,9 @@ void main() {
   float depth = -groundAt(w.xz);
   // Waves die down over the shallows and on the far horizon (no mesh there).
   float calm = smoothstep(0.05, 2.5, depth);
+  // The swell fades out towards the edge of the finely divided sea, so it meets
+  // the open ocean without a seam.
+  calm *= (1.0 - uOuter) * (1.0 - smoothstep(uNearHalf - 34.0, uNearHalf - 2.0, max(abs(w.x), abs(w.z))));
   vec3 tang = vec3(1.0, 0.0, 0.0);
   vec3 bin = vec3(0.0, 0.0, 1.0);
   vec3 off = vec3(0.0);
@@ -118,8 +123,6 @@ uniform vec3 uShallow;
 uniform vec3 uSky;
 uniform vec3 uHorizon;
 uniform sampler2D uRipples;
-uniform float uOuter;
-uniform float uNearHalf;
 varying vec3 vWorld;
 varying vec3 vNormalW;
 varying float vCrest;

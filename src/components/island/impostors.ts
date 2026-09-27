@@ -55,7 +55,9 @@ vec3 toCam = cameraPosition - centre;
   toCam = vec3(viewMatrix[0][2], viewMatrix[1][2], viewMatrix[2][2]);
 #endif
 vec3 fwd = normalize(toCam);
-vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), fwd));
+// Looking (or lit) straight down, "up" is ill-defined: lean on +z instead.
+vec3 ref = abs(fwd.y) > 0.97 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+vec3 right = normalize(cross(ref, fwd));
 vec3 up = cross(fwd, right);
 float el = fwd.y;
 float ring = el > uSplit ? 1.0 : 0.0;

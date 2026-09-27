@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { hash } from "@/lib/island/rng";
@@ -31,11 +31,14 @@ type Kind =
   | "dead";
 
 /** Which photographed plant each kind uses, and how tall it stands (world units). */
-const LOOK: Record<Kind, { atlas: string; height: number; shadow: boolean; max: number }> = {
-  conifer: { atlas: "conifer", height: 2.8, shadow: true, max: 7000 },
-  sapling: { atlas: "sapling", height: 1.1, shadow: true, max: 5000 },
+const LOOK: Record<
+  Kind,
+  { atlas: string; height: number; shadow: boolean; max: number; bright?: number }
+> = {
+  conifer: { atlas: "conifer", height: 2.8, shadow: true, max: 7000, bright: 1.15 },
+  sapling: { atlas: "sapling", height: 1.1, shadow: true, max: 5000, bright: 1.35 },
   jungle: { atlas: "jungle", height: 2.5, shadow: true, max: 4000 },
-  broadleaf: { atlas: "broadleaf", height: 1.3, shadow: true, max: 3000 },
+  broadleaf: { atlas: "broadleaf", height: 1.3, shadow: true, max: 3000, bright: 1.5 },
   palm: { atlas: "palm", height: 1.5, shadow: true, max: 2500 },
   cycad: { atlas: "palm", height: 0.45, shadow: false, max: 5000 },
   cypress: { atlas: "cypress", height: 2.0, shadow: true, max: 3000 },
@@ -169,9 +172,13 @@ export function Vegetation({ tiles, dry }: { tiles: Tile[]; dry: boolean }) {
     impostorUniforms.uWind.value = env.raining ? 2.4 : 1;
   });
 
+  const plants = useMemo(() => {
+    const out: Plant[] = [];
+    tiles.forEach((t, i) => plantsOn(t, i, out));
+    return out;
+  }, [tiles]);
+
   useLayoutEffect(() => {
-    const plants: Plant[] = [];
-    tiles.forEach((t, i) => plantsOn(t, i, plants));
     const n: Partial<Record<Kind, number>> = {};
     for (const p of plants) {
       const mesh = refs.current[p.kind];
@@ -187,7 +194,7 @@ export function Vegetation({ tiles, dry }: { tiles: Tile[]; dry: boolean }) {
       tmpM.compose(tmpP, tmpQ, tmpS);
       mesh.setMatrixAt(k, tmpM);
       // A little variety; the dry season browns the leaves.
-      const shade = 0.82 + p.tint * 0.3;
+      const shade = (0.82 + p.tint * 0.3) * (look.bright ?? 1);
       tmpC.setRGB(shade, shade, shade);
       if (dry && p.kind !== "dead" && p.kind !== "conifer" && p.kind !== "sapling")
         tmpC.lerp(DRY, 0.25 + p.tint * 0.2);
@@ -200,7 +207,7 @@ export function Vegetation({ tiles, dry }: { tiles: Tile[]; dry: boolean }) {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-  }, [tiles, dry, looks]);
+  }, [plants, tiles, dry, looks]);
 
   return (
     <group>
@@ -212,7 +219,10 @@ export function Vegetation({ tiles, dry }: { tiles: Tile[]; dry: boolean }) {
             key={k}
             ref={(r) => {
               refs.current[k] = r;
-              if (r) {
+              // Ref callbacks run again on every render: only set up a mesh once,
+              // or its placed plants would be wiped until the next placement.
+              if (r && !r.userData.ready) {
+                r.userData.ready = true;
                 r.setColorAt(0, tmpC.set("#ffffff"));
                 r.count = 0;
                 r.customDepthMaterial = look.depth;

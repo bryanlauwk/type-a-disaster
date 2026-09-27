@@ -224,7 +224,7 @@ void main() {
   // Churned up with sand and mud.
   // Silt-laden water: brown and khaki swirls, with the sky caught in it.
   float swirl = vn(vWorld.xz * 0.25 - flow * 0.2) * 0.6 + vn(vWorld.xz * 0.9 - flow * 0.6) * 0.4;
-  vec3 col = mix(vec3(0.3, 0.25, 0.17), vec3(0.46, 0.42, 0.3), swirl);
+  vec3 col = mix(vec3(0.24, 0.2, 0.13), vec3(0.5, 0.44, 0.31), swirl);
   col = mix(col, vec3(0.26, 0.33, 0.3), smoothstep(0.55, 0.9, swirl) * 0.5);
   col = mix(col, vec3(0.72, 0.8, 0.86), clamp(fres * 1.4 + 0.08, 0.0, 0.6));
   // White water at the leading edge, marbled foam behind it.
@@ -236,7 +236,9 @@ void main() {
   col = mix(col, vec3(0.94, 0.95, 0.93), clamp(foam, 0.0, 1.0));
   float spec = pow(max(dot(reflect(-uSun, n), view), 0.0), 240.0);
   col = col * uLight + spec * 0.35 * uLight;
-  gl_FragColor = vec4(col, 0.93 * smoothstep(0.02, 0.2, vLevel) * smoothstep(0.2, 0.75, vEdge));
+  // Ragged, feathered margins rather than tile edges.
+  float rag = (vn(vWorld.xz * 1.3) - 0.5) * 0.5 + (vn(vWorld.xz * 4.0) - 0.5) * 0.2;
+  gl_FragColor = vec4(col, 0.93 * smoothstep(0.02, 0.2, vLevel) * smoothstep(0.3, 0.7, vEdge + rag));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <fog_fragment>

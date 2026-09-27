@@ -337,7 +337,9 @@ export function Structures({ world }: { world: WorldState }) {
           key={g}
           ref={(r) => {
             refs.current[g] = r;
-            if (r) {
+            // Runs on every render: set up once, or placed huts would vanish.
+            if (r && !r.userData.ready) {
+              r.userData.ready = true;
               r.setColorAt(0, cc.set("#ffffff"));
               r.count = 0;
             }
