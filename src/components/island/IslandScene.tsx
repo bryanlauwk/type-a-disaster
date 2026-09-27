@@ -11,7 +11,7 @@ import { Terrain } from "./Terrain";
 import { FreshWater, Lava, Sea, Waterfalls } from "./Waters";
 import { Vegetation } from "./Vegetation";
 import { Landmarks } from "./Landmarks";
-import { Dinos } from "./Dinos";
+import { Dinos, lifeBus } from "./Dinos";
 import { People, Structures } from "./Settlement";
 import {
   ActCamera,
@@ -77,6 +77,29 @@ function CameraBounds() {
   return null;
 }
 
+/**
+ * ?look=<species> in the URL keeps the camera on one animal of that kind:
+ * handy for checking how the animals look and move up close.
+ */
+function LookAt({ sp }: { sp: string }) {
+  const controls = useThree((st) => st.controls) as unknown as {
+    target: THREE.Vector3;
+    update: () => void;
+  } | null;
+  const camera = useThree((st) => st.camera);
+  const dist = Number(new URLSearchParams(window.location.search).get("dist") || 0);
+  useFrame(() => {
+    const a = lifeBus.agents.find((o) => o.sp === sp && o.state !== "dead" && !o.young);
+    if (!a || !controls) return;
+    const d = dist || 6;
+    controls.target.set(a.x, a.y + 0.6, a.z);
+    const h = Number(new URLSearchParams(window.location.search).get("h") || 0.45);
+    camera.position.set(a.x + d * 0.8, a.y + d * h, a.z + d * 0.6);
+    controls.update();
+  });
+  return null;
+}
+
 /** A glowing ring on the ground where a power would land. */
 function CursorRing({ cursor, world }: { cursor: Cursor; world: WorldState }) {
   const ref = useRef<THREE.Mesh>(null);
@@ -137,6 +160,12 @@ function IslandScene({
     return Math.min(1, Math.max(0, (performance.now() - c.tickAt) / c.dayMs));
   };
   const shake = useRef(0);
+  const [noVeg] = useState(
+    () => typeof window !== "undefined" && /[?&]veg=0\b/.test(window.location.search),
+  );
+  const [lookAt] = useState(() =>
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("look"),
+  );
   const w = world.weather;
   const weather = useMemo(
     () => ({
@@ -211,7 +240,7 @@ function IslandScene({
           <FreshWater tiles={world.tiles} />
           <Lava tiles={world.tiles} />
           <Waterfalls tiles={world.tiles} />
-          <Vegetation tiles={world.tiles} dry={dry} />
+          {!noVeg && <Vegetation tiles={world.tiles} dry={dry} />}
           <Landmarks tiles={world.tiles} day={world.day} ash={w.ash > 0} />
           <Structures world={world} />
           <People world={world} />
@@ -230,6 +259,7 @@ function IslandScene({
         </Shaker>
         {cursor && <CursorRing cursor={cursor} world={world} />}
         <ActCamera run={act ?? null} />
+        {lookAt && <LookAt sp={lookAt} />}
         <OrbitControls
           makeDefault
           enablePan

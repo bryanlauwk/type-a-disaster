@@ -4,6 +4,7 @@ import { SPECIES_DEFS, TRAIT_EFFECTS } from "@/lib/island/species";
 import { STAGES, TECH_COST, TECH_LABEL } from "@/lib/island/tribe";
 import { SPECIES, TECHS, type Chronicle, type Notice, type WorldState } from "@/lib/island/types";
 import { cn } from "@/lib/utils";
+import { SKIN_CREDITS } from "./dinoCredits";
 
 const NOTICE_TONE: Record<Notice["kind"], string> = {
   herd: "text-moss",
@@ -203,6 +204,33 @@ export function CaveWall({ world, telling }: { world: WorldState; telling: boole
             Favour refills a little every day. Fossils the tribe digs up teach them about the
             animals and give you evolution points to spend on Life → Evolve.
           </p>
+          <section>
+            <h4 className="font-mono text-[9px] uppercase tracking-[0.25em] text-ochre/70">
+              The animals' models
+            </h4>
+            <ul className="mt-2 space-y-1 text-[11px] leading-snug text-[#e6d7b8]/55">
+              {SPECIES.map((sp) => {
+                const cr = SKIN_CREDITS[sp];
+                return (
+                  <li key={sp}>
+                    {SPECIES_DEFS[sp].plural}:{" "}
+                    <a
+                      className="underline decoration-ochre/40 hover:text-[#f1e4c8]"
+                      href={`https://sketchfab.com/3d-models/${cr.uid}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      “{cr.name}”
+                    </a>{" "}
+                    by {cr.author}, CC BY 4.0
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="mt-2 text-[11px] leading-snug text-[#e6d7b8]/45">
+              Recoloured, reposed and reanimated for the island.
+            </p>
+          </section>
         </div>
       )}
     </div>

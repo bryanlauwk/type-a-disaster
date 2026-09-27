@@ -114,7 +114,7 @@ export const SPECIES_DEFS: Record<SpeciesId, SpeciesDef> = {
     group: [3, 7],
     size: 1.6,
     blurb:
-      "Plates down its back and spikes on its tail. Slow, and not worth the trouble for most hunters.",
+      "Armour plates from snout to tail, and a bone club on the end of it. Slow, and it stands its ground: most hunters give up.",
   },
   snapper: {
     id: "snapper",

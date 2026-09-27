@@ -1,0 +1,182 @@
+<!doctype html><html><body>
+<script type="importmap">{"imports":{"three":"./three/build/three.module.js","three/addons/":"./three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { CONFIG } from './config.js';
+
+const q = new URLSearchParams(location.search);
+const sp = q.get('sp');
+const cfg = CONFIG[sp];
+const L = new GLTFLoader();
+L.register(parser => ({
+  name: 'KHR_materials_pbrSpecularGlossiness',
+  ext(i) { const d = (parser.json.materials || [])[i]; return d && d.extensions && d.extensions.KHR_materials_pbrSpecularGlossiness; },
+  getMaterialType(i) { return this.ext(i) ? THREE.MeshStandardMaterial : null; },
+  extendMaterialParams(i, p) {
+    const e = this.ext(i); if (!e) return Promise.resolve();
+    const [r, g, b] = e.diffuseFactor || [1, 1, 1];
+    p.color = new THREE.Color().setRGB(r, g, b, THREE.LinearSRGBColorSpace); p.roughness = 0.7; p.metalness = 0;
+    return e.diffuseTexture ? parser.assignTexture(p, 'map', e.diffuseTexture, THREE.SRGBColorSpace) : Promise.resolve();
+  },
+}));
+const gltf = await L.loadAsync('glb/' + cfg.file + '.glb');
+const scene = new THREE.Scene();
+const holder = new THREE.Group();
+holder.rotation.y = cfg.turn || 0;
+holder.add(gltf.scene);
+scene.add(holder);
+const mixer = new THREE.AnimationMixer(gltf.scene);
+const clipBy = (s) => {
+  const c = gltf.animations.find(a => a.name.includes(s));
+  if (!c) throw new Error(`no clip ${s} in ${gltf.animations.map(a => a.name).join(',')}`);
+  return c;
+};
+const bonesByName = [];
+gltf.scene.traverse(o => { if (o.isBone || o.type === 'Bone' || o.isObject3D) bonesByName.push(o); });
+
+const _pq = new THREE.Quaternion(), _qw = new THREE.Quaternion(), _d = new THREE.Quaternion();
+const AX = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
+function pose(spec, t) {
+  mixer.stopAllAction();
+  if (spec.src) {
+    const a = mixer.clipAction(clipBy(spec.src)); a.reset().play();
+    mixer.setTime(t * (spec.speed || 1));
+  } else {
+    const a = mixer.clipAction(clipBy(spec.base)); a.reset().play();
+    mixer.setTime(spec.at != null ? spec.at : t);
+  }
+  holder.updateMatrixWorld(true);
+  for (const m of spec.mods || []) {
+    const ang = (m.offset || 0) + (m.amp || 0) * Math.sin(2 * Math.PI * (m.freq || 1) * t / spec.dur + (m.phase || 0));
+    for (const b of bonesByName) {
+      if (!m.bones.test(b.name) || !b.parent) continue;
+      b.parent.getWorldQuaternion(_pq);
+      _qw.setFromAxisAngle(AX[m.axis], ang);
+      _d.copy(_pq).invert().multiply(_qw).multiply(_pq);
+      b.quaternion.premultiply(_d);
+      b.updateMatrixWorld(true);
+    }
+  }
+}
+
+// Normalise: faces +z, feet on y = 0, one body length long.
+pose(cfg.clips[Object.keys(cfg.clips).find(k => (cfg.clips[k].src || cfg.clips[k].base) === cfg.ref) || Object.keys(cfg.clips)[0]], 0);
+const box = new THREE.Box3().setFromObject(holder, true);
+const size = box.getSize(new THREE.Vector3());
+const len = size.z;
+const norm = new THREE.Matrix4().makeScale(1 / len, 1 / len, 1 / len)
+  .multiply(new THREE.Matrix4().makeTranslation(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2));
+
+// Slots: one per (skeleton, bone), or per rigid mesh.
+const slots = [];
+const slotKey = new Map();
+const parts = [];
+holder.traverse(o => {
+  if (!o.isMesh || !o.geometry.attributes.position) return;
+  let offset;
+  if (o.isSkinnedMesh) {
+    const key = o.skeleton.uuid + o.bindMatrix.elements.join(',') + o.matrixWorld.elements.join(',');
+    if (slotKey.has(key)) offset = slotKey.get(key);
+    else {
+      offset = slots.length; slotKey.set(key, offset);
+      o.skeleton.bones.forEach((b, j) => slots.push({ mesh: o, j }));
+    }
+  } else { offset = slots.length; slots.push({ mesh: o, rigid: true }); }
+  const mats = Array.isArray(o.material) ? o.material : [o.material];
+  let g = o.geometry.clone();
+  if (!g.index) { const n = g.attributes.position.count; g.setIndex([...Array(n).keys()]); }
+  if (!g.attributes.normal) g.computeVertexNormals();
+  const n = g.attributes.position.count;
+  const bone = new Float32Array(n * 4), weight = new Float32Array(n * 4);
+  for (let v = 0; v < n; v++) {
+    if (o.isSkinnedMesh) {
+      const si = g.attributes.skinIndex, sw = g.attributes.skinWeight;
+      let tot = 0; for (let k = 0; k < 4; k++) tot += sw.getComponent(v, k);
+      for (let k = 0; k < 4; k++) { bone[v * 4 + k] = offset + si.getComponent(v, k); weight[v * 4 + k] = tot > 0 ? sw.getComponent(v, k) / tot : (k ? 0 : 1); }
+    } else { bone[v * 4] = offset; weight[v * 4] = 1; }
+  }
+  const out = new THREE.BufferGeometry();
+  out.setIndex(g.index);
+  out.setAttribute('position', g.attributes.position);
+  out.setAttribute('normal', g.attributes.normal);
+  out.setAttribute('uv', g.attributes.uv || new THREE.BufferAttribute(new Float32Array(n * 2), 2));
+  out.setAttribute('bakeBone', new THREE.BufferAttribute(bone, 4));
+  out.setAttribute('bakeWeight', new THREE.BufferAttribute(weight, 4));
+  // Split multi-material meshes by group.
+  const groups = g.groups.length ? g.groups : [{ start: 0, count: g.index.count, materialIndex: 0 }];
+  for (const gr of groups) {
+    const sub = out.clone();
+    sub.setIndex(Array.from(g.index.array.slice(gr.start, gr.start + gr.count)));
+    sub.clearGroups();
+    parts.push({ geo: sub, mat: mats[gr.materialIndex || 0] });
+  }
+});
+
+// Materials: plain PBR, documentary tint.
+const matMap = new Map();
+const tint = new THREE.Color(...(cfg.tint || [1, 1, 1]));
+const convert = (m) => {
+  if (matMap.has(m)) return matMap.get(m);
+  const n = new THREE.MeshStandardMaterial({
+    name: m.name,
+    color: (m.color ? m.color.clone() : new THREE.Color(1, 1, 1)).multiply(tint),
+    map: m.map || null,
+    normalMap: m.normalMap || null,
+    roughness: 0.78,
+    metalness: 0,
+    side: m.side,
+    alphaTest: m.alphaTest > 0 || m.transparent ? 0.5 : 0,
+  });
+  matMap.set(m, n);
+  return n;
+};
+// Merge parts that share a material.
+const byMat = new Map();
+for (const p of parts) { const m = convert(p.mat); if (!byMat.has(m)) byMat.set(m, []); byMat.get(m).push(p.geo); }
+const geos = [], mats = [];
+for (const [m, list] of byMat) { geos.push(list.length > 1 ? mergeGeometries(list, false) : list[0]); mats.push(m); }
+const merged = mergeGeometries(geos, true);
+
+// Bake the clips: 3 texels (rows of a 3x4 matrix) per slot per frame.
+const B = slots.length;
+const clipsMeta = {};
+const rows = [];
+const M = new THREE.Matrix4(), T = new THREE.Matrix4();
+for (const [name, spec] of Object.entries(cfg.clips)) {
+  const dur = spec.src ? clipBy(spec.src).duration / (spec.speed || 1) : spec.dur;
+  const fps = spec.fps || 15;
+  const frames = Math.max(2, Math.min(spec.max || 90, Math.round(dur * fps)));
+  clipsMeta[name] = { row: rows.length, frames, dur: +dur.toFixed(3) };
+  for (let f = 0; f < frames; f++) {
+    pose(spec, (f / frames) * dur);
+    const row = new Float32Array(B * 12);
+    slots.forEach((s, k) => {
+      const mesh = s.mesh;
+      if (s.rigid) M.copy(norm).multiply(mesh.matrixWorld);
+      else {
+        const b = mesh.skeleton.bones[s.j];
+        M.copy(norm).multiply(mesh.matrixWorld).multiply(mesh.bindMatrixInverse)
+          .multiply(b.matrixWorld).multiply(mesh.skeleton.boneInverses[s.j]).multiply(mesh.bindMatrix);
+      }
+      const e = M.elements; // column-major
+      for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) row[k * 12 + r * 4 + c] = e[c * 4 + r];
+    });
+    rows.push(row);
+  }
+}
+const all = new Uint16Array(rows.length * B * 12);
+rows.forEach((row, i) => { for (let k = 0; k < row.length; k++) all[i * B * 12 + k] = THREE.DataUtils.toHalfFloat(row[k]); });
+
+const mesh = new THREE.Mesh(merged, mats);
+const glb = await new GLTFExporter().parseAsync(mesh, { binary: true, maxTextureSize: 1024 });
+const b64 = (buf) => { const u = new Uint8Array(buf); let s = ''; for (let i = 0; i < u.length; i += 0x8000) s += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(s); };
+window.RESULT = {
+  glb: b64(glb),
+  anim: b64(all.buffer),
+  meta: { bones: B, rows: rows.length, clips: clipsMeta, height: +(size.y / len).toFixed(3), width: +(size.x / len).toFixed(3), tris: merged.index.count / 3, vertices: merged.attributes.position.count },
+};
+document.title = 'done';
+</script></body></html>
