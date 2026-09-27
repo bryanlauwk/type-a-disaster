@@ -16,6 +16,7 @@ import { STAGES, TECH_LABEL, foundCamp, tribeDay, wreck } from "./tribe";
 import { generateIsland } from "./worldgen";
 import {
   RIVER,
+  SIZE,
   SPECIES,
   type Action,
   type Chronicle,
@@ -217,12 +218,12 @@ export function tick(prev: WorldState): WorldState {
 }
 
 function neighboursWater(s: WorldState, i: number) {
-  const x = i % 64;
-  const y = Math.floor(i / 64);
+  const x = i % SIZE;
+  const y = Math.floor(i / SIZE);
   for (let dy = -2; dy <= 2; dy++)
     for (let dx = -2; dx <= 2; dx++) {
-      const j = (y + dy) * 64 + (x + dx);
-      if (x + dx < 0 || x + dx > 63 || y + dy < 0 || y + dy > 63) continue;
+      const j = (y + dy) * SIZE + (x + dx);
+      if (x + dx < 0 || x + dx >= SIZE || y + dy < 0 || y + dy >= SIZE) continue;
       if (s.tiles[j].water === RIVER) return true;
     }
   return false;

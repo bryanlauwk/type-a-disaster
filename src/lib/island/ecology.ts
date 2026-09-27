@@ -5,6 +5,7 @@ import {
   LAKE,
   RIVER,
   SEA,
+  SIZE,
   SPECIES,
   type Biome,
   type Herd,
@@ -14,6 +15,8 @@ import {
 } from "./types";
 
 export const YEAR = 40;
+/** How much bigger the island is than the original 64×64 one (territories scale with it). */
+export const AREA = (SIZE * SIZE) / (64 * 64);
 export const WET_DAYS = 14;
 export const seasonOf = (day: number) => (day % YEAR < WET_DAYS ? "wet" : "dry");
 
@@ -344,7 +347,10 @@ export function feedAndBreed(s: WorldState, geo: Geography, facts: Record<Region
       const hungry = need > 0 ? Math.max(0, 1 - kills / need) : 0;
       f.hunger[sp] = hungry;
       // Hunters hold territories: a region only has room for so many.
-      const room = Math.max(0, 1 - n / ((sp === "tyrant" ? 3 : 14) * suit + 0.5));
+      const room = Math.max(
+        0,
+        1 - n / ((sp === "tyrant" ? 3 * AREA * 0.6 : 14 * AREA * 0.7) * suit + 0.5),
+      );
       const births = (def.convert ?? 0) * kills * suit * BREED[season] * room;
       const deaths = t.death * n + hungry * 0.035 * n * t.starve + f.burning * 0.3 * n;
       setPop(s, sp, r, n + births - deaths);

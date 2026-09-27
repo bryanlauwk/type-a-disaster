@@ -134,7 +134,16 @@ function coastRadius(seed: number, u: number, v: number) {
   return r;
 }
 
-function regionFor(u: number, v: number): RegionId {
+/** Region borders wander, like real ones, instead of running dead straight. */
+function warp(seed: number, u: number, v: number): [number, number] {
+  return [
+    u + (fbm(seed + 70, u * 3, v * 3) - 0.5) * 0.26,
+    v + (fbm(seed + 71, u * 3, v * 3) - 0.5) * 0.26,
+  ];
+}
+
+function regionFor(seed: number, u0: number, v0: number): RegionId {
+  const [u, v] = warp(seed, u0, v0);
   const r = Math.hypot(u, v);
   if (r < VOLCANO_R) return "volcano";
   if (r < BASIN_R) return "fern_basin";
@@ -159,13 +168,17 @@ function baseHeight(seed: number, u: number, v: number): number {
   }
   const outer = wsum > 0 ? sum / wsum : 0.5;
   const basin = 0.7 + fbm(seed + 10, u * 5, v * 5) * 0.35;
-  const b = Math.min(1, Math.max(0, (BASIN_R + 0.06 - r) / 0.14));
+  const [wu, wv] = warp(seed, u, v);
+  const b = Math.min(1, Math.max(0, (BASIN_R + 0.06 - Math.hypot(wu, wv)) / 0.14));
   let h = outer * (1 - b) + basin * b;
   // The Great Volcano, with a crater at the top.
   h +=
     9.5 * Math.exp(-((r / 0.15) ** 2)) +
     (fbm(seed + 11, u * 9, v * 9) - 0.5) * 1.2 * Math.exp(-((r / 0.2) ** 2));
   h -= 2.4 * Math.exp(-((r / 0.045) ** 2));
+  // Fine relief: knolls, gullies and ridgelines, stronger on high ground.
+  h += (fbm(seed + 12, u * 16, v * 16) - 0.5) * (0.25 + Math.min(1, h / 4) * 0.5);
+  h += (ridged(seed + 13, u * 11, v * 11) - 0.5) * Math.min(1, Math.max(0, (h - 1.2) / 3)) * 0.8;
   // Titan Valley: a long trough through the highlands down to the pass.
   const valley = Math.exp(-(((u - 0.02) / 0.07) ** 2)) * (v < -0.3 && v > -0.85 ? 1 : 0);
   h -= valley * 1.6;
@@ -194,7 +207,7 @@ function around(i: number): number[] {
  * Runs a river from a spring towards the coast in its direction, taking the
  * lowest ground on the way and cutting a valley where the land rises.
  */
-function traceRiver(tiles: Tile[], start: number, angle: number): number[] {
+function traceRiver(tiles: Tile[], start: number, angle: number, seed = 0): number[] {
   // Where it wants to reach the sea.
   let target = start;
   for (let r = 0.2; r < 1.4; r += 0.01) {
@@ -207,11 +220,15 @@ function traceRiver(tiles: Tile[], start: number, angle: number): number[] {
   const path = [start];
   const seen = new Set(path);
   let cur = start;
-  for (let step = 0; step < 200; step++) {
+  for (let step = 0; step < SIZE * 3; step++) {
     const t = tiles[cur];
     if (t.water === SEA || (t.water === LAKE && step > 3)) break;
+    // Downhill and seaward, wandering through a noise field so it meanders.
     const score = (n: number) =>
-      tiles[n].h + 0.32 * Math.hypot(tx(n) - gx, ty(n) - gy) + hash(start, n) * 0.15;
+      tiles[n].h +
+      ((0.32 * 64) / SIZE) * Math.hypot(tx(n) - gx, ty(n) - gy) +
+      noise(seed + start, tx(n) * 0.16, ty(n) * 0.16) * 0.4 +
+      hash(start, n) * 0.08;
     const next = around(cur)
       .filter((n) => !seen.has(n))
       .sort((a, b) => score(a) - score(b) || a - b)[0];
@@ -251,15 +268,15 @@ const BIOME_COVER: Record<Biome, [number, number]> = {
 
 /** The dinosaurs the island starts with, by region. */
 const START_POP: Record<SpeciesId, Partial<Record<RegionId, number>>> = {
-  titan: { titan_highlands: 14, fern_basin: 8 },
-  hornface: { fern_basin: 14, emerald_grasslands: 18, fertile_plains: 5, offshore: 6 },
-  duckbill: { misty_wetlands: 20, emerald_grasslands: 10, fern_basin: 10 },
-  plateback: { fern_basin: 8, titan_highlands: 6, fossil_canyon: 4 },
-  snapper: { misty_wetlands: 30, sunken_jungle: 22 },
-  tyrant: { predator_ridge: 3, sunken_jungle: 1 },
-  raptor: { predator_ridge: 8, sunken_jungle: 7, fossil_canyon: 4 },
-  skywing: { coast: 22, predator_ridge: 10, offshore: 8 },
-  leviathan: { coast: 3, offshore: 2 },
+  titan: { titan_highlands: 26, fern_basin: 14 },
+  hornface: { fern_basin: 26, emerald_grasslands: 34, fertile_plains: 10, offshore: 8 },
+  duckbill: { misty_wetlands: 36, emerald_grasslands: 18, fern_basin: 18 },
+  plateback: { fern_basin: 14, titan_highlands: 10, fossil_canyon: 8 },
+  snapper: { misty_wetlands: 50, sunken_jungle: 40 },
+  tyrant: { predator_ridge: 5, sunken_jungle: 2 },
+  raptor: { predator_ridge: 14, sunken_jungle: 12, fossil_canyon: 6 },
+  skywing: { coast: 36, predator_ridge: 16, offshore: 12 },
+  leviathan: { coast: 5, offshore: 3 },
 };
 
 export const ISLAND_NAME = "Primordia";
@@ -275,7 +292,7 @@ export function generateIsland(seed: number): WorldState {
       const coast = coastRadius(seed, u, v);
       const land = Math.min(1, Math.max(0, (coast - r) / 0.07));
       let h = baseHeight(seed, u, v) * land - (1 - land) * (0.4 + Math.max(0, r - coast) * 9);
-      let region = regionFor(u, v);
+      let region = regionFor(seed, u, v);
       // Offshore islets.
       for (const [iu, iv, ir, ih] of ISLETS) {
         const d = Math.hypot(u - iu, v - iv);
@@ -343,9 +360,20 @@ export function generateIsland(seed: number): WorldState {
   sources.push([tileAt(-0.2, -0.62), (-110 * Math.PI) / 180]);
   sources.push([tileAt(0.14, -0.66), (-70 * Math.PI) / 180]);
   for (const [start, a] of sources) {
-    const path = traceRiver(tiles, start, a);
+    const path = traceRiver(tiles, start, a, seed);
     rivers.push(path);
     for (const i of path) if (!tiles[i].water) tiles[i].water = RIVER;
+    // Rivers widen as they near the sea.
+    for (let k = Math.floor(path.length * 0.45); k < path.length; k++) {
+      const i = path[k];
+      const bank = around(i)
+        .filter((n) => !tiles[n].water && Math.abs(tiles[n].h - tiles[i].h) < 0.5)
+        .sort((p, q) => tiles[p].h - tiles[q].h || p - q)[0];
+      if (bank !== undefined) {
+        tiles[bank].water = RIVER;
+        tiles[bank].h = Math.min(tiles[bank].h, tiles[i].h + 0.02);
+      }
+    }
   }
   // Rivers sit a little below their banks, and waterfalls mark the big drops.
   let falls = -1;
@@ -356,7 +384,7 @@ export function generateIsland(seed: number): WorldState {
       const b = tiles[path[k + 1]];
       const drop = a.h - b.h;
       const r = Math.hypot(uOf(tx(path[k])), vOf(ty(path[k])));
-      if (drop > 0.45 && r > 0.3 && a.water === RIVER) {
+      if (drop > 0.3 && r > 0.3 && a.water === RIVER) {
         a.falls = true;
         // Thunder Falls drops off the northern highlands.
         const high =
@@ -476,7 +504,7 @@ export function generateIsland(seed: number): WorldState {
   };
 
   const state: WorldState = {
-    version: 1,
+    version: 2,
     name: ISLAND_NAME,
     seed,
     rng: seed ^ 0x5bd1e995,

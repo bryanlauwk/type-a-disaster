@@ -4,7 +4,7 @@ A god-game on a Jurassic island. Primordia is a huge volcanic island ruled by di
 
 ## The island
 
-A 64×64 map generated from a seed (`src/lib/island/worldgen.ts`), with the Great Volcano at its heart and rivers running from the mountains to the sea:
+A 128×128 map generated from a seed (`src/lib/island/worldgen.ts`), with the Great Volcano at its heart and rivers running from the mountains to the sea:
 
 - **Fern Basin** around the volcano, where the great herds graze.
 - **Titan Highlands** (north), with the Sauropod Migration Pass and Titan Valley.
@@ -67,6 +67,10 @@ The dinosaurs are real 3D models, all CC BY 4.0 via Sketchfab (from the Objavers
 - Raptors: "Velociraptor With Fixed Colour" by dinomaster
 - Skywings: "Pteranodon (with Fixed Colour)" by dinomaster
 - Leviathans: "mosasaurus" by Epic_devolepment
+
+Plants are real models too, photographed from 16 angles into impostor atlases (`public/plants`, `src/components/island/impostors.ts`): Poly Haven's CC0 fir, fir sapling, island tree, fern, shrub, pachira and dead-trunk scans, plus CC BY 4.0 models from Sketchfab: "Ponga" (tree fern) by toAflame, "Realistic Palm Tree Model vol.1" by aliyeredon, "Bald Cypress" by BaptisteBerard and "Jungle Tree" by kobaltsecond6c7d6150917a4267.
+
+The ground is eight CC0 Poly Haven photo surfaces (aerial grass, forest litter, earth, coastal sand, mossy rock, cliff strata, basalt, burnt ground) blended per tile (`src/components/island/ground.ts`). The water ripple normal map comes from the three.js examples (MIT).
 
 Everything else on the island is generated in code. The sky is Poly Haven's [Kloofendal 48d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) by Greg Zaal and Jarod Guest (CC0). Primordia, its tribe and its animals are fictional.
 

@@ -228,7 +228,9 @@ export function CaveWall({ world, telling }: { world: WorldState; telling: boole
               })}
             </ul>
             <p className="mt-2 text-[11px] leading-snug text-[#e6d7b8]/45">
-              Recoloured, reposed and reanimated for the island.
+              Recoloured, reposed and reanimated for the island. Plants: Poly Haven (CC0); “Ponga”
+              by toAflame, “Realistic Palm Tree Model vol.1” by aliyeredon, “Bald Cypress” by
+              BaptisteBerard, “Jungle Tree” by kobaltsecond (CC BY 4.0). Ground: Poly Haven (CC0).
             </p>
           </section>
         </div>

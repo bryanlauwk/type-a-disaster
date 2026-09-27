@@ -84,6 +84,17 @@ describe("god powers", () => {
     expect(act(s, { power: "meteor", tile: land })).toBe(s);
   });
 
+  test("a tsunami floods the low ground inland and stops at the hills", () => {
+    const s = { ...base, favour: 30 };
+    const after = act(s, { power: "tsunami", tile: s.tribe.home });
+    const tiles = after.actions.at(-1)!.impact!.tiles;
+    expect(tiles.length).toBeGreaterThan(40);
+    for (const i of tiles) {
+      expect(after.tiles[i].flood).toBeGreaterThan(0);
+      expect(s.tiles[i].h).toBeLessThan(3.4);
+    }
+  });
+
   test("the eruption spills lava", () => {
     const s = { ...base, favour: 30 };
     const after = act(s, { power: "eruption", tile: 0 });

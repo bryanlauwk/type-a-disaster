@@ -5,6 +5,8 @@ import { SPECIES_DEFS, TRAIT_EFFECTS } from "./species";
 import { STAGES } from "./tribe";
 import {
   SPECIES,
+  tx,
+  ty,
   type ActionRecord,
   type Chronicle,
   type SpeciesId,
@@ -81,8 +83,8 @@ export function describeAct(
   const fires = after.tiles.filter((t) => t.fire > 0).length;
   if (fires > 3) facts.push(`${fires} patches of forest are burning.`);
   const tribeNear = Math.hypot(
-    (a.tile % 64) - (before.tribe.home % 64),
-    Math.floor(a.tile / 64) - Math.floor(before.tribe.home / 64),
+    tx(a.tile) - tx(before.tribe.home),
+    ty(a.tile) - ty(before.tribe.home),
   );
   if (tribeNear < 8) facts.push("It happened close to the tribe's home.");
   if (!facts.length) facts.push("The tribe watched from the bay.");

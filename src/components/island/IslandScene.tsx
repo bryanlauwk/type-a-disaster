@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { seasonOf } from "@/lib/island/sim";
 import { geography } from "@/lib/island/terrain";
 import { LANDMARK_NAMES, REGION_TITLES } from "@/lib/island/names";
-import { wx, wz, type RegionId, type WorldState } from "@/lib/island/types";
+import { HALF, wx, wz, type RegionId, type WorldState } from "@/lib/island/types";
 import { IslandSky } from "./IslandSky";
 import { Terrain } from "./Terrain";
 import { FreshWater, Lava, Sea, Waterfalls } from "./Waters";
@@ -35,7 +35,7 @@ export interface SimClock {
   paused: boolean;
 }
 
-const OPENING_CAMERA: [number, number, number] = [26, 44, 50];
+const OPENING_CAMERA: [number, number, number] = [50, 84, 96];
 
 /** Tall phone screens need to stand further back to see the whole island. */
 function openingCamera(): [number, number, number] {
@@ -71,8 +71,8 @@ function CameraBounds() {
     if (!controls) return;
     const t = controls.target;
     const r = Math.hypot(t.x, t.z);
-    if (r > 30) t.multiplyScalar(30 / r);
-    t.y = Math.max(0, Math.min(6, t.y));
+    if (r > HALF - 4) t.multiplyScalar((HALF - 4) / r);
+    t.y = Math.max(0, Math.min(8, t.y));
   });
   return null;
 }
@@ -81,6 +81,24 @@ function CameraBounds() {
  * ?look=<species> in the URL keeps the camera on one animal of that kind:
  * handy for checking how the animals look and move up close.
  */
+function DebugCamera({ spec }: { spec: string }) {
+  const controls = useThree((st) => st.controls) as unknown as {
+    target: THREE.Vector3;
+    update: () => void;
+  } | null;
+  const camera = useThree((st) => st.camera);
+  const done = useRef(0);
+  useFrame(() => {
+    if (!controls || done.current > 3) return;
+    const [x, y, z, tx, ty, tz] = spec.split(",").map(Number);
+    camera.position.set(x, y, z);
+    controls.target.set(tx, ty, tz);
+    controls.update();
+    done.current++;
+  });
+  return null;
+}
+
 function LookAt({ sp }: { sp: string }) {
   const controls = useThree((st) => st.controls) as unknown as {
     target: THREE.Vector3;
@@ -147,7 +165,8 @@ function IslandScene({
     return () => clearTimeout(id);
   }, []);
   const clockRef = useRef(clock);
-  const frozen = useRef(0);
+  // Before the first day starts (and while paused from the start) it is late morning.
+  const frozen = useRef(0.3);
   if (clock.paused && !clockRef.current.paused)
     frozen.current = Math.min(
       1,
@@ -162,6 +181,9 @@ function IslandScene({
   const shake = useRef(0);
   const [noVeg] = useState(
     () => typeof window !== "undefined" && /[?&]veg=0\b/.test(window.location.search),
+  );
+  const [camSpec] = useState(() =>
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("cam"),
   );
   const [lookAt] = useState(() =>
     typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("look"),
@@ -191,7 +213,7 @@ function IslandScene({
         z: wz(i),
         text: title,
         variant: "region",
-        near: 34,
+        near: 60,
       });
     }
     world.tiles.forEach((t, i) => {
@@ -203,7 +225,7 @@ function IslandScene({
         z: wz(i),
         text: LANDMARK_NAMES[t.landmark],
         variant: "landmark",
-        far: 36,
+        far: 60,
       });
     });
     return out;
@@ -216,7 +238,7 @@ function IslandScene({
       <Canvas
         shadows={small ? false : "percentage"}
         dpr={[1, small || fx ? 1.5 : 2]}
-        camera={{ position: openingCamera(), fov: 40, near: 0.1, far: 400 }}
+        camera={{ position: openingCamera(), fov: 40, near: 0.1, far: 800 }}
         gl={{
           antialias: true,
           toneMapping: THREE.ACESFilmicToneMapping,
@@ -235,7 +257,7 @@ function IslandScene({
           <PhotoSky />
         </Suspense>
         <Shaker shake={shake}>
-          <Terrain tiles={world.tiles} onPick={onPick} onHover={onHover} />
+          <Terrain tiles={world.tiles} onPick={onPick} onHover={onHover} dry={dry} />
           <Sea tiles={world.tiles} />
           <FreshWater tiles={world.tiles} />
           <Lava tiles={world.tiles} />
@@ -260,12 +282,13 @@ function IslandScene({
         {cursor && <CursorRing cursor={cursor} world={world} />}
         <ActCamera run={act ?? null} />
         {lookAt && <LookAt sp={lookAt} />}
+        {camSpec && <DebugCamera spec={camSpec} />}
         <OrbitControls
           makeDefault
           enablePan
           screenSpacePanning={false}
           minDistance={3}
-          maxDistance={140}
+          maxDistance={230}
           maxPolarAngle={1.35}
           minPolarAngle={0.2}
           target={[0, 0, 2]}
