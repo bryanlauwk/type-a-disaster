@@ -241,23 +241,48 @@ export function tick(prev: CityState): CityState {
     }
   }
 
-  // Fire spreads, then burns out into rubble.
+  // Fire spreads more readily through polluted, supernatural, low-green towns.
+  const greenCover = natureScore(s.grid, st.pollution);
+  const fireSpreadChance = clamp(
+    0.12 + st.pollution / 500 + st.rift / 500 + (40 - greenCover) / 1400,
+    0.04,
+    0.42,
+  );
   const burning = s.grid.map((t, i) => (t.fire > 0 ? i : -1)).filter((i) => i >= 0);
   for (const i of burning) {
     const t = s.grid[i];
-    if (rand(s) < 0.12 + st.rift / 400) {
-      const n = pick(s, NEIGHBORS[i]);
-      const nt = s.grid[n];
-      if ((isBuilding(nt) || nt.kind === "forest") && nt.fire === 0) nt.fire = 3;
+    const fuel = NEIGHBORS[i].filter((n) => {
+      const neighbor = s.grid[n];
+      return (isBuilding(neighbor) || neighbor.kind === "forest") && neighbor.fire === 0;
+    });
+    if (fuel.length && rand(s) < fireSpreadChance) {
+      const n = pick(s, fuel);
+      s.grid[n].fire = 3 + randInt(s, 2);
     }
     t.fire -= 1;
     if (t.fire === 0) setKind(s, i, "rubble");
   }
 
-  // Floods recede, occasionally taking a building with them.
-  for (let i = 0; i < s.grid.length; i++) {
+  // Floods recede, occasionally damage buildings, and can spill into nearby
+  // low ground. Green cover slows the spread; proximity to water speeds it up.
+  const floodSpreadChance = clamp(
+    0.025 + st.pollution / 2000 + (40 - greenCover) / 2000,
+    0.015,
+    0.16,
+  );
+  const flooded = s.grid.map((t, i) => (t.flood > 0 ? i : -1)).filter((i) => i >= 0);
+  for (const i of flooded) {
     const t = s.grid[i];
-    if (t.flood <= 0) continue;
+    const waterEdge = NEIGHBORS[i].some((n) => s.grid[n].kind === "water");
+    const floodable = NEIGHBORS[i].filter((n) => {
+      const neighbor = s.grid[n];
+      return neighbor.kind !== "water" && neighbor.flood === 0 && neighbor.fire === 0;
+    });
+    const spreadChance = Math.min(0.24, floodSpreadChance + (waterEdge ? 0.08 : 0));
+    if (floodable.length && rand(s) < spreadChance) {
+      const n = pick(s, floodable);
+      s.grid[n].flood = 2 + randInt(s, 2);
+    }
     t.flood -= 1;
     if (isOccupied(t) && rand(s) < 0.06) setKind(s, i, "rubble");
   }
@@ -542,13 +567,15 @@ function applyOp(s: CityState, op: TileOp) {
   }
 }
 
-const SCALE_RIFT = { minor: 1, citywide: 3, apocalyptic: 8 };
+const SUPERNATURAL_RIFT_BONUS = { minor: 1, citywide: 3, apocalyptic: 8 };
 
 export function applyEvent(prev: CityState, input: string, result: EventResult): CityState {
   const s = cloneState(prev);
   const st = s.stats;
   addStats(st, result.stat_changes);
-  st.rift += SCALE_RIFT[result.scale];
+  // Scale alone is not supernatural. Add a size bonus only when the newsroom
+  // has already identified a positive rift effect.
+  if (result.stat_changes.rift > 0) st.rift += SUPERNATURAL_RIFT_BONUS[result.scale];
   for (const op of result.tile_ops.slice(0, 6)) applyOp(s, op);
   if (result.ongoing) {
     s.ongoing.push({

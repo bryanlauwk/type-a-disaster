@@ -56,6 +56,10 @@ const IMPACT_AT: Record<ActorKind, number> = {
   wave: 2.5,
   storm: 2.2,
   fireworks: 1.2,
+  earthquake: LIBRARY_IMPACT.earthquake,
+  aurora: LIBRARY_IMPACT.aurora,
+  phantom_train: LIBRARY_IMPACT.phantom_train,
+  radio_burst: LIBRARY_IMPACT.radio_burst,
 };
 export const impactTime = (actors: Actor[]) => (actors.length ? IMPACT_AT[actors[0].kind] : 0.4);
 
@@ -1451,6 +1455,7 @@ const HITS_GROUND = new Set<ActorKind>([
   "wave",
   "tornado",
   "rift",
+  "earthquake",
 ]);
 
 /** The component that plays one actor. */

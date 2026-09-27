@@ -165,6 +165,10 @@ export const ACTOR_KINDS = [
   "storm",
   "fireworks",
   "hot_air_balloon",
+  "earthquake",
+  "aurora",
+  "phantom_train",
+  "radio_burst",
   // Small-town life
   "parade",
   "kids_on_bikes",

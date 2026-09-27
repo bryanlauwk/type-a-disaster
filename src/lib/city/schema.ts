@@ -458,6 +458,17 @@ export const citySummarySchema = z.object({
   tiles: z.record(z.string(), z.number()),
   nature: z.number().min(0).max(100),
   districts: z.record(z.string(), z.number()),
+  hazards: z.object({
+    burning: z.number().int().min(0),
+    flooded: z.number().int().min(0),
+    rubble: z.number().int().min(0),
+  }),
+  ongoingEffects: z
+    .array(z.object({ label: z.string().max(60), daysLeft: z.number().int().min(0).max(30) }))
+    .max(8),
+  scheduledUpdates: z
+    .array(z.object({ daysUntil: z.number().int().min(0).max(10), note: z.string().max(160) }))
+    .max(6),
   recentHeadlines: z.array(z.string().max(160)).max(5),
 });
 export type CitySummary = z.infer<typeof citySummarySchema>;

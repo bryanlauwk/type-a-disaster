@@ -33,10 +33,13 @@ Beneath the town hangs its mirror (`scene/UpsideDown.tsx`): the same streets and
 
 - **The town grows on its own.** One day passes every 12 seconds, or 3 seconds on fast-forward. Happy, solvent districts build new houses, shops and brick blocks in their own character: family homes on Elm Street and Oak Hill, storefronts on Main Street, trailers in Pine Acres, sheds and annexes at the lab. The woods and Mirror Lake are protected; nothing is built on the railroad.
 - **You type events.** Claude returns map effects (destroy, burn, flood, build, landmark, clear; aimed at a district, the railroad or an area), a spectacle (actors, how the crowd reacts, who responds), and up to three follow-ups that arrive as bulletins on later days.
+- **Town memory shapes the next event.** The newsroom sees active fires, floods, rubble, lingering effects and already scheduled bulletins, so a new event can react to what is already happening. Ordinary events leave the Rift alone; only a supernatural event can widen it.
+- **Hazards move through the map.** Fires spread through adjacent buildings and woods faster in polluted, low-green or high-Rift conditions. Flooding can spill into nearby tiles, with green cover slowing it and water edges speeding it up.
 - **The actor & effect library** (`scene/ActorLibrary.tsx` and `scene/Spectacle.tsx`):
   - **The Upside Down:** a gate that tears open in mid-air, vines that grow over the ground and up the houses, a spore storm, and a colossal shadow that rises over the horizon in a red storm.
   - **Small-town life:** kids on BMX bikes with flashlights, the lab's black vans and men in hazmat suits, Christmas lights that blink one bulb at a time as if spelling something out, and the homecoming parade with its marching band and pumpkin float.
   - **Set pieces:** a whale, meteor, giant falling object, creature or kaiju, UFO, tornado, flood wave, storm, fireworks and a hot-air balloon.
+  - **New phenomena:** earthquakes send shock rings and debris across the ground; auroras ripple above the rooftops; phantom freight trains cross the actual railroad and pause its traffic; radio bursts expand into visible signal rings and sparks.
   - **Mishaps:** a blackout, a sinkhole and a landslide.
 - **The Courier** prints each event with quotes from the townsfolk (a sheriff blaming swamp gas, a lab spokesman denying everything). Walkie-talkie messages from the kids show up as intercepted transmissions.
 - **Event credits.** You get 5, and one refills every 10 minutes. Minor events cost 1 credit, citywide 2, apocalyptic 3.

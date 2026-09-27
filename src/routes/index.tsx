@@ -80,14 +80,13 @@ export const Route = createFileRoute("/")({
 
 const DAY_MS = 12000;
 const SUGGESTIONS = [
-  "A gate tears open under Hollow Point Lab",
-  "The Christmas lights on Elm Street start blinking",
-  "Kids on bikes chase something into Blackpine Woods",
-  "Something crawls out of the pool at Hawthorne House",
-  "Black vans roll down Main Street",
-  "Spores drift over the homecoming game",
-  "A giant waffle lands on Dot's Diner",
-  "The power station blows during the parade",
+  { tag: "A strange sign", text: "The Christmas lights on Elm Street blink out a name" },
+  {
+    tag: "A close call",
+    text: "Kids on bikes follow a trail of glowing footprints into Blackpine Woods",
+  },
+  { tag: "A town mystery", text: "Every clock in Maple Hollow stops at 8:15" },
+  { tag: "A big arrival", text: "A giant waffle lands on Dot's Diner during the lunch rush" },
 ];
 const C = (GRID_SIZE - 1) / 2;
 
@@ -188,6 +187,7 @@ function Index() {
   const [credits, setCredits] = useState<Credits>({ credits: MAX_CREDITS, since: 0 });
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [busyFor, setBusyFor] = useState(0);
   const [run, setRun] = useState<SpectacleRun | null>(null);
   const [holding, setHolding] = useState(false);
   const [tickAt, setTickAt] = useState(() => performance.now());
@@ -202,7 +202,7 @@ function Index() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [dismissedCollapse, setDismissedCollapse] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const inputRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   // Load a shared city from the URL hash, else the saved city, else a fresh one.
   useEffect(() => {
@@ -309,6 +309,16 @@ function Index() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    if (!busy) {
+      setBusyFor(0);
+      return;
+    }
+    const started = Date.now();
+    const id = setInterval(() => setBusyFor(Math.floor((Date.now() - started) / 1000)), 500);
+    return () => clearInterval(id);
+  }, [busy]);
+
   const adoptShared = useCallback(() => {
     if (!shared) return;
     setShared(false);
@@ -319,7 +329,7 @@ function Index() {
     const event = text.trim();
     if (!city || busy || holding) return;
     if (event.length < 3) {
-      inputRef.current?.focus();
+      promptRef.current?.focus();
       return;
     }
     const available = currentCredits(credits);
@@ -341,6 +351,15 @@ function Index() {
           districts[id] = (districts[id] ?? 0) + 1;
         }
       });
+      const hazards = city.grid.reduce(
+        (totals, tile) => {
+          if (tile.fire > 0) totals.burning++;
+          if (tile.flood > 0) totals.flooded++;
+          if (tile.kind === "rubble") totals.rubble++;
+          return totals;
+        },
+        { burning: 0, flooded: 0, rubble: 0 },
+      );
       const res = await simulateEvent({
         data: {
           event,
@@ -351,6 +370,14 @@ function Index() {
             tiles: Object.fromEntries(Object.entries(kinds).filter(([, n]) => n > 0)),
             nature: natureScore(city.grid, city.stats.pollution),
             districts,
+            hazards,
+            ongoingEffects: city.ongoing
+              .slice(-8)
+              .map(({ label, daysLeft }) => ({ label, daysLeft })),
+            scheduledUpdates: city.scheduled.slice(0, 6).map((update) => ({
+              daysUntil: Math.max(0, update.day - city.day),
+              note: update.note,
+            })),
             recentHeadlines: city.log.slice(-5).map((e) => e.result.headline),
           },
         },
@@ -611,37 +638,73 @@ function Index() {
         )}
 
         {/* Event input */}
-        <div className="absolute inset-x-0 bottom-0 p-3">
-          <div className="mx-auto max-w-2xl border-2 border-ink bg-paper/95 p-2 shadow-[4px_4px_0_0_var(--ink)] backdrop-blur-sm">
+        <div className="absolute inset-x-0 bottom-0 p-3 sm:p-4">
+          <div className="mx-auto max-w-2xl border-2 border-ink bg-paper/95 p-3 shadow-[5px_5px_0_0_var(--ink)] backdrop-blur-md">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <div>
+                <p className="font-mono text-[9px] uppercase tracking-[0.24em] text-stamp">
+                  Your dispatch · Maple Hollow, October ’85
+                </p>
+                <p className="mt-0.5 font-serif-d text-sm font-bold">What happens next?</p>
+              </div>
+              <span className="font-mono text-[9px] text-muted-foreground">{input.length}/200</span>
+            </div>
             <form
-              className="flex gap-2"
+              className="flex items-end gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 submit(input);
               }}
             >
-              <input
-                ref={inputRef}
+              <textarea
+                ref={promptRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 maxLength={200}
                 disabled={busy || holding}
                 aria-label="Event"
-                placeholder="Type something that happens to the town…"
-                className="min-w-0 flex-1 bg-transparent px-2 py-2 font-serif-d text-base outline-none placeholder:text-ink/40"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    submit(input);
+                  }
+                }}
+                rows={2}
+                placeholder="A strange thing happens somewhere in town…"
+                className="min-h-12 min-w-0 flex-1 resize-none bg-white/55 px-3 py-2 font-serif-d text-base leading-snug outline-none ring-1 ring-inset ring-ink/20 transition focus:ring-2 focus:ring-stamp placeholder:text-ink/40 disabled:opacity-60"
               />
               <Button
                 type="submit"
-                disabled={busy || holding || !city}
-                className="rounded-none bg-stamp text-paper hover:bg-stamp/90"
+                disabled={busy || holding || !city || input.trim().length < 3}
+                className="h-12 shrink-0 rounded-none bg-stamp px-3 text-paper shadow-[2px_2px_0_0_var(--ink)] hover:bg-stamp/90 active:translate-x-px active:translate-y-px active:shadow-none sm:px-4"
               >
                 {busy ? <Loader2 className="animate-spin" /> : <Send />}
-                <span className="hidden sm:inline">{busy ? "Printing…" : "Print it"}</span>
+                <span>{busy ? "On deadline…" : holding ? "Live…" : "Make it happen"}</span>
               </Button>
             </form>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+            {busy ? (
+              <p
+                aria-live="polite"
+                className="mt-2 flex items-center gap-2 font-mono text-[10px] text-stamp"
+              >
+                <span className="inline-block size-1.5 animate-pulse rounded-full bg-stamp" />
+                {busyFor < 4
+                  ? "The newsroom is calling around…"
+                  : busyFor < 12
+                    ? "The Courier is checking the facts…"
+                    : "The presses are warming up. Maple Hollow is on the line…"}
+              </p>
+            ) : holding ? (
+              <p
+                aria-live="polite"
+                className="mt-2 font-mono text-[10px] uppercase tracking-wider text-stamp"
+              >
+                Breaking · Watch the event unfold above
+              </p>
+            ) : null}
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-dashed border-ink/25 pt-2">
               <div
-                className="flex items-center gap-1"
+                className="flex items-center gap-1.5"
                 title="Event credits: minor events cost 1, citywide 2, apocalyptic 3"
               >
                 {Array.from({ length: MAX_CREDITS }, (_, i) => (
@@ -654,26 +717,37 @@ function Index() {
                   />
                 ))}
                 <span className="ml-1 font-mono text-[10px] text-muted-foreground">
-                  {c.credits < MAX_CREDITS ? `+1 in ${nextIn}m` : "credits full"}
+                  {c.credits}/{MAX_CREDITS} dispatch credits
+                  {c.credits < MAX_CREDITS ? ` · +1 in ${nextIn}m` : " · full"}
                 </span>
               </div>
-              <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                {SUGGESTIONS.map((s) => (
+              <span className="hidden font-mono text-[9px] text-muted-foreground sm:inline">
+                Need a spark?
+              </span>
+              <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
+                {SUGGESTIONS.map(({ tag, text }) => (
                   <button
-                    key={s}
+                    key={tag}
                     type="button"
-                    disabled={busy}
+                    disabled={busy || holding}
                     onClick={() => {
-                      setInput(s);
-                      inputRef.current?.focus();
+                      setInput(text);
+                      promptRef.current?.focus();
                     }}
-                    className="shrink-0 border border-ink/30 px-1.5 py-0.5 font-mono text-[10px] hover:bg-ink hover:text-paper"
+                    className="shrink-0 border border-ink/30 bg-white/45 px-2 py-1 text-left transition hover:border-stamp hover:bg-stamp hover:text-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stamp disabled:opacity-50"
                   >
-                    {s}
+                    <span className="block font-mono text-[8px] uppercase tracking-wider opacity-65">
+                      {tag}
+                    </span>
+                    <span className="block max-w-48 truncate font-serif-d text-xs">{text}</span>
                   </button>
                 ))}
               </div>
             </div>
+            <p className="mt-1.5 px-0.5 font-mono text-[9px] text-muted-foreground">
+              Be specific about where it happens. Big events can use up to 3 credits. Enter to file
+              · Shift+Enter for a new line.
+            </p>
           </div>
         </div>
       </main>

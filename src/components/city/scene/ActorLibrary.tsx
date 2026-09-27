@@ -6,6 +6,8 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { GRID_SIZE } from "@/lib/city/types";
+import { RAILROAD } from "@/lib/city/hollow";
 import type { ActorKind } from "@/lib/city/types";
 import { hash } from "./common";
 import { AFTERMATH, Mat, ease, type ActorProps } from "./actorParts";
@@ -26,6 +28,10 @@ type LibraryKind = Extract<
   | "sinkhole"
   | "landslide"
   | "blackout"
+  | "earthquake"
+  | "aurora"
+  | "phantom_train"
+  | "radio_burst"
 >;
 
 /** Seconds after start when each library actor makes contact. */
@@ -42,6 +48,10 @@ export const LIBRARY_IMPACT: Record<LibraryKind, number> = {
   sinkhole: 1.2,
   landslide: 2,
   blackout: 1,
+  earthquake: 2.1,
+  aurora: 2.8,
+  phantom_train: 4,
+  radio_burst: 2.4,
 };
 
 const tmpM = new THREE.Matrix4();
@@ -691,6 +701,274 @@ function Blackout({ focus, getT, impact, bus }: ActorProps) {
   );
 }
 
+/** A rolling fault line: shock rings race out and asphalt chunks kick upward. */
+function Earthquake({ a, focus, getT, impact, seed }: ActorProps) {
+  const rings = useRef<THREE.Group>(null);
+  const debris = useRef<THREE.InstancedMesh>(null);
+  const chunks = useMemo(
+    () =>
+      Array.from({ length: 36 }, (_, i) => ({
+        angle: detail(seed, i, 211) * Math.PI * 2,
+        delay: detail(seed, i, 223) * 1.1,
+        speed: 1.4 + detail(seed, i, 227) * 2.2,
+        size: 0.06 + detail(seed, i, 229) * 0.14,
+      })),
+    [seed],
+  );
+  useFrame(() => {
+    const t = getT();
+    const since = t - impact;
+    rings.current?.children.forEach((ring, i) => {
+      const age = since - i * 0.52;
+      ring.visible = age >= 0 && age < 3.2;
+      if (age < 0) return;
+      const progress = Math.min(1, age / 3.2);
+      ring.scale.setScalar(0.3 + progress * (2.2 + a.size * 0.48));
+      const material = (ring as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      material.opacity = (1 - progress) * 0.78;
+    });
+    const mesh = debris.current;
+    if (!mesh) return;
+    chunks.forEach((chunk, i) => {
+      const age = since - chunk.delay;
+      if (age < 0 || age > 2.4) {
+        mesh.setMatrixAt(i, HIDDEN);
+        return;
+      }
+      const distance = 0.4 + age * chunk.speed;
+      const y = Math.max(0.04, 0.08 + age * (2 + a.size * 0.18) - age * age * 2.4);
+      tmpP.set(
+        focus.x + Math.cos(chunk.angle) * distance,
+        y,
+        focus.z + Math.sin(chunk.angle) * distance,
+      );
+      tmpQ.setFromEuler(new THREE.Euler(age * 3, age * 4, age * 2));
+      tmpM.compose(tmpP, tmpQ, tmpS.setScalar(chunk.size * Math.max(0, 1 - age / 2.4)));
+      mesh.setMatrixAt(i, tmpM);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+  return (
+    <>
+      <group ref={rings}>
+        {[0, 1, 2].map((i) => (
+          <mesh
+            key={i}
+            position={[focus.x, 0.06 + i * 0.012, focus.z]}
+            rotation={[-Math.PI / 2, 0, 0]}
+          >
+            <ringGeometry args={[0.9, 1, 48]} />
+            <meshBasicMaterial
+              color={i === 1 ? "#f0bd72" : "#c9a98a"}
+              transparent
+              opacity={0.7}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        ))}
+      </group>
+      <instancedMesh
+        ref={debris}
+        args={[undefined, undefined, chunks.length]}
+        castShadow
+        frustumCulled={false}
+      >
+        <dodecahedronGeometry args={[1, 0]} />
+        <meshStandardMaterial color="#77716a" roughness={0.96} />
+      </instancedMesh>
+    </>
+  );
+}
+
+/** Three luminous curtains ripple above town, turning a strange sky into a set piece. */
+function Aurora({ focus, getT, impact, seed }: ActorProps) {
+  const curtains = useRef<THREE.Group>(null);
+  const colors = ["#74ffd2", "#78a7ff", "#d88bff"];
+  useFrame((state) => {
+    const t = getT();
+    curtains.current?.children.forEach((curtain, band) => {
+      const mesh = curtain as THREE.Mesh;
+      const geometry = mesh.geometry as THREE.PlaneGeometry;
+      const positions = geometry.attributes.position as THREE.BufferAttribute;
+      const columns = 49;
+      for (let i = 0; i < positions.count; i++) {
+        const col = i % columns;
+        const row = Math.floor(i / columns);
+        const x = positions.getX(i);
+        const rowOffset = (row / 4 - 0.5) * 2.4;
+        positions.setY(
+          i,
+          rowOffset +
+            Math.sin(x * 0.42 + t * (0.8 + band * 0.16) + band * 1.7) * 0.6 +
+            Math.sin(x * 0.15 - t * 0.7 + seed * 0.00001) * 0.4,
+        );
+      }
+      positions.needsUpdate = true;
+      geometry.computeVertexNormals();
+      curtain.rotation.z = Math.sin(state.clock.elapsedTime * 0.12 + band) * 0.035;
+      curtain.position.y = 11 + band * 0.8 + Math.sin(t * 0.4 + band) * 0.25;
+      const mat = mesh.material as THREE.MeshBasicMaterial;
+      mat.opacity = Math.min(0.68, Math.max(0, (t - impact * 0.25) * 0.28));
+    });
+  });
+  return (
+    <group ref={curtains} position={[focus.x, 0, focus.z]}>
+      {colors.map((color, i) => (
+        <mesh key={color} position={[0, 11 + i * 0.8, (i - 1) * 0.7]}>
+          <planeGeometry args={[25, 3, 48, 4]} />
+          <meshBasicMaterial
+            color={color}
+            transparent
+            opacity={0}
+            side={THREE.DoubleSide}
+            depthWrite={false}
+            toneMapped={false}
+          />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** A pale freight train crosses the real railroad, briefly holding back its ordinary counterpart. */
+function PhantomTrain({ getT, impact, bus }: ActorProps) {
+  const train = useRef<THREE.Group>(null);
+  const headlight = useRef<THREE.PointLight>(null);
+  const stopped = useRef(false);
+  const railZ = RAILROAD.row - (GRID_SIZE - 1) / 2;
+  useFrame(() => {
+    const t = getT();
+    const headX = -18 + t * (18 / impact);
+    if (train.current) {
+      train.current.position.set(headX, 0, railZ);
+      train.current.visible = t < impact + 5;
+      train.current.children.forEach((car, i) => {
+        car.position.x = -i * 1.5;
+        const pulse = 0.7 + Math.sin(t * 3 + i * 0.7) * 0.16;
+        car.traverse((node) => {
+          if (node instanceof THREE.Mesh && node.material instanceof THREE.MeshBasicMaterial)
+            node.material.opacity = pulse;
+        });
+      });
+    }
+    if (headlight.current) headlight.current.intensity = 2 + Math.sin(t * 8) * 0.8;
+    if (!stopped.current && t >= impact) {
+      stopped.current = true;
+      bus.railStopUntil = Math.max(bus.railStopUntil, bus.now + 5);
+    }
+  });
+  return (
+    <group ref={train} rotation={[0, Math.PI / 2, 0]}>
+      {Array.from({ length: 7 }, (_, i) => (
+        <group key={i}>
+          <mesh castShadow position={[0, 0.48, 0]}>
+            <boxGeometry args={[0.92, 0.72, 1.34]} />
+            <meshBasicMaterial color={i === 0 ? "#e5f4ff" : "#a9c8d7"} transparent opacity={0.75} />
+          </mesh>
+          <mesh position={[0, 0.91, 0]}>
+            <boxGeometry args={[0.94, 0.1, 1.38]} />
+            <meshBasicMaterial color="#d8e7ef" transparent opacity={0.52} />
+          </mesh>
+          {[-1, 1].map((side) => (
+            <mesh key={side} position={[side * 0.47, 0.49, 0.1]}>
+              <boxGeometry args={[0.025, 0.2, 0.22]} />
+              <meshBasicMaterial color="#b9f8ff" transparent opacity={0.92} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+      <pointLight
+        ref={headlight}
+        position={[0, 0.8, 0]}
+        color="#c6fbff"
+        distance={9}
+        intensity={2}
+      />
+    </group>
+  );
+}
+
+/** Radio static made visible: antenna sparks and concentric waves passing over rooftops. */
+function RadioBurst({ a, focus, getT, impact, seed }: ActorProps) {
+  const rings = useRef<THREE.Group>(null);
+  const sparks = useRef<THREE.InstancedMesh>(null);
+  const points = useMemo(
+    () =>
+      Array.from({ length: 28 }, (_, i) => ({
+        angle: detail(seed, i, 241) * Math.PI * 2,
+        height: 0.25 + detail(seed, i, 251) * 1.4,
+        size: 0.035 + detail(seed, i, 257) * 0.06,
+        delay: detail(seed, i, 263) * 1.4,
+      })),
+    [seed],
+  );
+  useFrame(() => {
+    const t = getT();
+    rings.current?.children.forEach((ring, i) => {
+      const age = t - impact + i * 0.55;
+      ring.visible = age >= 0 && age < 3.4;
+      if (age < 0) return;
+      ring.scale.setScalar(0.1 + age * (0.95 + a.size * 0.14));
+      (ring as THREE.Mesh).material &&
+        (((ring as THREE.Mesh).material as THREE.MeshBasicMaterial).opacity = Math.max(
+          0,
+          0.8 * (1 - age / 3.4),
+        ));
+    });
+    const mesh = sparks.current;
+    if (!mesh) return;
+    points.forEach((point, i) => {
+      const age = t - impact - point.delay;
+      if (age < 0 || age > 2.6) {
+        mesh.setMatrixAt(i, HIDDEN);
+        return;
+      }
+      const radius = 0.3 + age * (1.1 + a.size * 0.2);
+      tmpP.set(
+        focus.x + Math.cos(point.angle) * radius,
+        point.height + Math.sin(age * 9 + i) * 0.12,
+        focus.z + Math.sin(point.angle) * radius,
+      );
+      tmpM.compose(tmpP, tmpQ.identity(), tmpS.setScalar(point.size * (1 - age / 2.6)));
+      mesh.setMatrixAt(i, tmpM);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+  return (
+    <>
+      <group ref={rings}>
+        {[0, 1, 2, 3].map((i) => (
+          <mesh
+            key={i}
+            position={[focus.x, 2.4 + i * 0.45, focus.z]}
+            rotation={[Math.PI / 2, 0, 0]}
+          >
+            <torusGeometry args={[1, 0.025, 6, 48]} />
+            <meshBasicMaterial
+              color={i % 2 ? "#93f4ff" : "#e3c9ff"}
+              transparent
+              opacity={0.65}
+              toneMapped={false}
+            />
+          </mesh>
+        ))}
+      </group>
+      <mesh position={[focus.x, 0.65, focus.z]}>
+        <cylinderGeometry args={[0.045, 0.07, 1.3, 8]} />
+        <meshStandardMaterial color="#55585b" metalness={0.55} roughness={0.45} />
+      </mesh>
+      <instancedMesh
+        ref={sparks}
+        args={[undefined, undefined, points.length]}
+        frustumCulled={false}
+      >
+        <sphereGeometry args={[1, 8, 6]} />
+        <meshBasicMaterial color="#b8fbff" toneMapped={false} />
+      </instancedMesh>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 
 export const ACTOR_LIBRARY: Record<LibraryKind, (p: ActorProps) => React.ReactNode> = {
@@ -706,4 +984,8 @@ export const ACTOR_LIBRARY: Record<LibraryKind, (p: ActorProps) => React.ReactNo
   sinkhole: Sinkhole,
   landslide: Landslide,
   blackout: Blackout,
+  earthquake: Earthquake,
+  aurora: Aurora,
+  phantom_train: PhantomTrain,
+  radio_burst: RadioBurst,
 };

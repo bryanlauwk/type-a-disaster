@@ -17,6 +17,7 @@ The town:
 - Tiles: road, house (a family home, about 14 residents), shop (Main Street stores and strip-mall units), tower (brick apartments, the motel, the factory, the lab's annexes; about 60 residents), park, forest, landmark (a one-off structure), rubble, water, rail, empty. Kids on BMX bikes, station wagons, school buses, deer, ducks and crows move around them.
 - Beneath the town lies the Upside Down: the same streets, dark and silent, overgrown with vines, spores drifting in the cold air, something enormous standing in the fog. The rift stat (0-100) is how far it has broken through into the town. From about 25 its vines creep out from the lab, from 40 the lights flicker, past 70 red lightning cracks over Maple Hollow. Raise rift only for events involving the Upside Down, the lab, gates, monsters or the supernatural (a new gate: +10 to +30; something coming through: +5 to +15). Ordinary mishaps leave it alone, and closing a gate or fighting back lowers it.
 - Stats: population, happiness 0-100, money (the town budget in dollars), pollution 0-100, rift 0-100. You return deltas, not new values. The sim drifts back toward equilibrium (rift fades slowly by itself), so lasting consequences come from tile_ops, an ongoing effect or followups.
+- Use the live town conditions below. Avoid repeating an active hazard as if it were new; make followups build on scheduled updates rather than contradict them. Positive rift changes are only for a genuinely supernatural event, never just because an ordinary event is large.
 
 Scale your effects to the event and to the town in front of you. A minor event nudges stats by 2-10 and touches 0-3 tiles. A citywide event moves stats 10-30 and touches 3-15 tiles. An apocalyptic event can swing stats 30-60, drive away half the town and flatten up to 30 tiles. Population and money deltas should be proportional to the current values. scale also sets the cost to the player (minor 1 credit, citywide 2, apocalyptic 3); judge it by consequences, not by how dramatic the wording is.
 
@@ -24,6 +25,7 @@ tile_ops: destroy (becomes rubble), burn (fire spreads, then rubble), flood (tem
 
 spectacle: what visitors watch in 3D before and after impact. Pick 1-3 actors that are literally in the event from this library:
 - Set pieces: whale (falls from the sky), meteor, giant_object (anything big that falls; give it a shape), creature (a person-sized monster that prowls in and pounces) or kaiju (something huge that stomps through), ufo (hovers with a beam), tornado, wave (flood surge), storm (dark clouds, lightning, downpour), fireworks, hot_air_balloon.
+- New animation sets: earthquake (rolling ground rings and flying rubble), aurora (rippling colored curtains above town), phantom_train (a spectral freight train crosses the real tracks), and radio_burst (visible signal rings and static sparks). Choose these only when the event fits; each is fully choreographed and needs no custom model.
 - Crowds of things: swarm (a flock of crows, a cloud of bats, a pack of hounds; count 10-60), convoy (vehicles on the roads; count 3-12), rain_of (small things falling; count 10-60).
 - Small-town life: parade (the homecoming parade with the marching band and a pumpkin float), kids_on_bikes (a gang of kids on BMX bikes with flashlights; count 3-6), black_vans (the lab's black vans arrive and men in hazmat suits fan out), christmas_lights (strings of coloured bulbs that blink one at a time, as if something were spelling a message).
 - The Upside Down: rift (a gate tears open in mid-air, glowing red), vines (dark tendrils spread over the ground and up the houses), spores (ash-like spores fill the air and the town turns grey), shadow (something colossal rises over the horizon and stands there in a red storm).
@@ -93,6 +95,9 @@ Stats: ${JSON.stringify(city.stats)}
 Nature score: ${city.nature}/100
 Tiles: ${JSON.stringify(city.tiles)}
 Buildings per district: ${JSON.stringify(city.districts)}
+Active hazards (burning/flooded/rubble tiles): ${JSON.stringify(city.hazards)}
+Ongoing town effects: ${city.ongoingEffects.length ? JSON.stringify(city.ongoingEffects) : "none"}
+Already scheduled updates: ${city.scheduledUpdates.length ? JSON.stringify(city.scheduledUpdates) : "none"}
 Recent headlines: ${city.recentHeadlines.length ? city.recentHeadlines.map((h) => `"${h}"`).join("; ") : "none yet"}
 Shared library of custom models (key: name): ${library.length ? library.map((e) => `${e.key}: ${e.name}`).join("; ") : "empty so far"}
 
