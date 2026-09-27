@@ -99,11 +99,18 @@ describe("city simulation", () => {
 
   test("district targets land in that district", () => {
     const s = createCity(8);
-    const next = applyEvent(s, "fire on Elm Street", {
-      ...meteor,
-      tile_ops: [{ op: "burn", target: "elm_street", count: 4, build_kind: null, landmark: null }],
-      followups: [],
-    });
+    const next = applyEvent(
+      s,
+      "fire on Elm Street",
+      {
+        ...meteor,
+        tile_ops: [
+          { op: "burn", target: "elm_street", count: 4, build_kind: null, landmark: null },
+        ],
+        followups: [],
+      },
+      false,
+    );
     const burning = next.grid.map((t, i) => (t.fire > 0 ? i : -1)).filter((i) => i >= 0);
     expect(burning.length).toBe(4);
     for (const i of burning) expect(districtAt(i).id).toBe("elm_street");
@@ -111,12 +118,19 @@ describe("city simulation", () => {
 
   test("the railroad target hits the tracks, and wrecked track is relaid", () => {
     let s = createCity(4);
-    s = applyEvent(s, "the freight train derails", {
-      ...meteor,
-      tile_ops: [{ op: "destroy", target: "railroad", count: 5, build_kind: null, landmark: null }],
-      followups: [],
-      ongoing: null,
-    });
+    s = applyEvent(
+      s,
+      "the freight train derails",
+      {
+        ...meteor,
+        tile_ops: [
+          { op: "destroy", target: "railroad", count: 5, build_kind: null, landmark: null },
+        ],
+        followups: [],
+        ongoing: null,
+      },
+      false,
+    );
     const onRow = (i: number) => Math.abs(Math.floor(i / 32) - RAILROAD.row) <= 1;
     const wrecked = s.grid.map((t, i) => (t.kind === "rubble" ? i : -1)).filter((i) => i >= 0);
     expect(wrecked.length).toBe(5);
@@ -146,31 +160,41 @@ describe("city simulation", () => {
     while (s.day < 300) s = tick(s);
     const inElm = (i: number) => districtAt(i).id === "elm_street";
     const parks = (st: typeof s) => st.grid.filter((t, i) => inElm(i) && t.kind === "park").length;
-    const next = applyEvent(s, "The council opens pocket parks on Elm Street", {
-      ...meteor,
-      tile_ops: [
-        { op: "build", target: "elm_street", count: 3, build_kind: "park", landmark: null },
-      ],
-      followups: [],
-      ongoing: null,
-    });
+    const next = applyEvent(
+      s,
+      "The council opens pocket parks on Elm Street",
+      {
+        ...meteor,
+        tile_ops: [
+          { op: "build", target: "elm_street", count: 3, build_kind: "park", landmark: null },
+        ],
+        followups: [],
+        ongoing: null,
+      },
+      false,
+    );
     expect(parks(next) - parks(s)).toBe(3);
     // Landmarks aimed at a full district replace ordinary buildings, never icons.
     const icons = s.grid.filter((t) => t.kind === "landmark").map((t) => t.landmark?.name);
-    const withWhale = applyEvent(s, "A whale lands on Elm Street", {
-      ...meteor,
-      tile_ops: [
-        {
-          op: "landmark",
-          target: "elm_street",
-          count: 1,
-          build_kind: null,
-          landmark: { name: "Beached whale", shape: "blob", color: "#445566", height: 1 },
-        },
-      ],
-      followups: [],
-      ongoing: null,
-    });
+    const withWhale = applyEvent(
+      s,
+      "A whale lands on Elm Street",
+      {
+        ...meteor,
+        tile_ops: [
+          {
+            op: "landmark",
+            target: "elm_street",
+            count: 1,
+            build_kind: null,
+            landmark: { name: "Beached whale", shape: "blob", color: "#445566", height: 1 },
+          },
+        ],
+        followups: [],
+        ongoing: null,
+      },
+      false,
+    );
     const whale = withWhale.grid.findIndex((t) => t.landmark?.name === "Beached whale");
     expect(inElm(whale)).toBe(true);
     for (const name of icons)
@@ -179,12 +203,19 @@ describe("city simulation", () => {
 
   test("outskirts means the edge of the map", () => {
     const s = createCity(7);
-    const next = applyEvent(s, "Floods on the outskirts", {
-      ...meteor,
-      tile_ops: [{ op: "flood", target: "outskirts", count: 6, build_kind: null, landmark: null }],
-      followups: [],
-      ongoing: null,
-    });
+    const next = applyEvent(
+      s,
+      "Floods on the outskirts",
+      {
+        ...meteor,
+        tile_ops: [
+          { op: "flood", target: "outskirts", count: 6, build_kind: null, landmark: null },
+        ],
+        followups: [],
+        ongoing: null,
+      },
+      false,
+    );
     const flooded = next.grid.map((t, i) => [t, i] as const).filter(([t]) => t.flood > 0);
     expect(flooded.length).toBe(6);
     for (const [, i] of flooded) {

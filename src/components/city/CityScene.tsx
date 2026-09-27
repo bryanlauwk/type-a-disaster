@@ -16,10 +16,11 @@ import { Railroad } from "./scene/Railroad";
 import { Sky } from "./scene/Sky";
 import { SpectacleView, impactTime, type SpectacleRun } from "./scene/Spectacle";
 import { TileFx, landmarkLabelSpecs } from "./scene/TileFx";
+import type { TileHit } from "./scene/ripple";
 import { LabelOverlay, LabelProjector, type LabelRegistry, type LabelSpec } from "./scene/Labels";
 import { RiftLeak, UpsideDownWorld } from "./scene/UpsideDown";
 
-export type { SpectacleRun };
+export type { SpectacleRun, TileHit };
 
 /** Vertical gap between the town and the Upside Down hanging beneath it. */
 const GAP = 0.3;
@@ -190,7 +191,7 @@ function CameraDirector({ run, flipped }: { run: SpectacleRun | null; flipped: b
       return;
     }
     if (kind === "kaiju" || kind === "creature") {
-      const angle = hash(run.id * 31, 7) * Math.PI * 2;
+      const angle = run.heading ?? hash(run.id * 31, 7) * Math.PI * 2;
       follow.current = {
         t: 0,
         x: Math.cos(angle),
@@ -250,6 +251,7 @@ export interface CitySceneProps {
   clock: SimClock;
   spectacle: SpectacleRun | null;
   onImpact: (id: number) => void;
+  onReveal?: (id: number, hits: TileHit[]) => void;
   onSpectacleDone: (id: number) => void;
   /** Bumped when a chain-reaction bulletin fires, for a small tremor. */
   tremor: number;
@@ -263,6 +265,7 @@ function CityScene({
   clock,
   spectacle,
   onImpact,
+  onReveal,
   onSpectacleDone,
   tremor,
   showLabels,
@@ -410,6 +413,7 @@ function CityScene({
               run={spectacle}
               bus={bus}
               onImpact={onImpact}
+              onReveal={onReveal}
               onDone={onSpectacleDone}
             />
           )}

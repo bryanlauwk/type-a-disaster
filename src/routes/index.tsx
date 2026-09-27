@@ -48,7 +48,7 @@ import {
   tick,
 } from "@/lib/city/simulation";
 import { districtAt, DISTRICTS } from "@/lib/city/hollow";
-import type { SimClock, SpectacleRun } from "@/components/city/CityScene";
+import type { SimClock, SpectacleRun, TileHit } from "@/components/city/CityScene";
 import { hourOf } from "@/components/city/scene/common";
 import { withRealModels } from "@/components/city/scene/realModels";
 import { simulateEvent } from "@/lib/city/simulate.functions";
@@ -197,7 +197,15 @@ function Index() {
   const tickAtRef = useRef(tickAt);
   // The day starts (and resumes) from here: a morning city, not a dark one.
   const pausedPhase = useRef<number | null>(0.1);
-  const pending = useRef<{ id: number; next: CityState } | null>(null);
+  const pending = useRef<{
+    id: number;
+    before: CityState;
+    next: CityState;
+    /** Tiles whose damage has already landed on screen. */
+    revealed: Set<number>;
+    /** The 3D scene has started playing the event. */
+    playing: boolean;
+  } | null>(null);
   const runId = useRef(0);
   const [confirmReset, setConfirmReset] = useState(false);
   const [dismissedCollapse, setDismissedCollapse] = useState(false);
@@ -274,6 +282,23 @@ function Index() {
     pending.current = null;
     setCity(p.next);
     setHolding(false);
+  }, []);
+  // Damage spreading through town: show the event's result tile by tile.
+  const reveal = useCallback((id: number, hits: TileHit[]) => {
+    const p = pending.current;
+    if (!p || p.id !== id) return;
+    p.playing = true;
+    if (!hits.length) return;
+    for (const h of hits) {
+      p.revealed.add(h.tile);
+      if (h.label)
+        toast(`Chain reaction · ${h.label}`, {
+          description: "Reported live by the Courier's man on the scene.",
+          duration: 6000,
+        });
+    }
+    const grid = p.before.grid.map((t, i) => (p.revealed.has(i) ? p.next.grid[i] : t));
+    setCity({ ...p.next, grid });
   }, []);
   // A free model found after the spectacle started: swap it in, and credit
   // its author on the event's front page.
@@ -420,7 +445,13 @@ function Index() {
       // Hold time, play the spectacle, and apply the damage on impact.
       const id = ++runId.current;
       const focus = eventFocus(before, next, result);
-      pending.current = { id, next };
+      const impact = next.log[next.log.length - 1]?.impact;
+      if (impact) {
+        // Centre on the epicentre the engine worked out, so trails line up.
+        focus.x = (impact.tile % GRID_SIZE) - C;
+        focus.z = Math.floor(impact.tile / GRID_SIZE) - C;
+      }
+      pending.current = { id, before, next, revealed: new Set(), playing: false };
       setHolding(true);
       setRun({
         id,
@@ -429,9 +460,16 @@ function Index() {
         responders: result.spectacle.responders,
         focus: { x: focus.x, z: focus.z },
         radius: focus.radius,
+        heading: impact?.angle,
+        before,
+        after: next,
       });
-      // If the 3D scene isn't running (e.g. no WebGL), don't wait for it.
-      setTimeout(() => commit(id), 7000);
+      // If the 3D scene isn't running (e.g. no WebGL), don't wait for it; if
+      // it is, give a long rampage time to finish, then land it regardless.
+      setTimeout(() => {
+        if (pending.current?.id === id && !pending.current.playing) commit(id);
+      }, 7000);
+      setTimeout(() => commit(id), 20000);
       if (!early) void lookups.then((models) => lateModels(id, event, models));
       for (const a of result.spectacle.actors)
         if (a.fresh)
@@ -489,6 +527,7 @@ function Index() {
                   clock={clock}
                   spectacle={run}
                   onImpact={commit}
+                  onReveal={reveal}
                   onSpectacleDone={endSpectacle}
                   tremor={tremor}
                   showLabels={labels}
