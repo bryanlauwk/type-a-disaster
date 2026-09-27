@@ -272,10 +272,47 @@ export interface EventResult {
   followups: Followup[];
 }
 
+/**
+ * Knock-on reactions the engine adds after an event: a gas station that goes
+ * up, a water tower that bursts, an apartment block that topples onto the
+ * house next door.
+ */
+export const CHAIN_KINDS = ["explosion", "burst", "blackout", "breach", "blaze", "topple"] as const;
+export type ChainKind = (typeof CHAIN_KINDS)[number];
+
+export interface ChainLink {
+  kind: ChainKind;
+  /** The tile that set it off (the landmark itself). */
+  tile: number;
+  /** The damaged tile that triggered it, or -1 for the epicentre. */
+  from: number;
+  /** Tiles it changed, the trigger first. */
+  tiles: number[];
+  /** Headline-style line for the news ticker ("" for small ones). */
+  label: string;
+}
+
+/** Where and how an event physically hit the town (recomputed on replay). */
+export interface ImpactInfo {
+  /** Epicentre tile. */
+  tile: number;
+  /** Heading in radians for things that travel (kaiju, tornado). */
+  angle: number;
+  /** Tiles the traveller wrecked, in the order it reached them. */
+  trail: number[];
+  /** Tiles the blast, quake or storm damaged around the epicentre. */
+  blast: number[];
+  chain: ChainLink[];
+}
+
 export interface EventRecord {
   day: number;
   input: string;
   result: EventResult;
+  /** 1 = the event gets impact physics and chain reactions (newer events). */
+  physics?: 1;
+  /** Filled in by the engine; not saved. */
+  impact?: ImpactInfo;
 }
 
 export interface ScheduledFollowup extends Followup {

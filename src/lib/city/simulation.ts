@@ -1,11 +1,15 @@
-import { districtAt, hollowTerrain, RAILROAD } from "./hollow";
+import { DISTRICTS, districtAt, hollowTerrain, RAILROAD } from "./hollow";
 import {
   GRID_SIZE,
   SCALE_COST,
+  type ActorKind,
   type BuildKind,
+  type ChainKind,
+  type ChainLink,
   type CityState,
   type EventRecord,
   type EventResult,
+  type ImpactInfo,
   type Landmark,
   type Stats,
   type Tile,
@@ -261,6 +265,22 @@ export function tick(prev: CityState): CityState {
     }
     t.fire -= 1;
     if (t.fire === 0) setKind(s, i, "rubble");
+  }
+
+  // A fire that reaches the gas station, the water tower or the lab sets off
+  // its own chain reaction, reported in the next edition.
+  if (s.log.some((e) => e.physics === 1)) {
+    for (const i of specialLandmarks(s.grid)) {
+      if (s.grid[i].fire === 0) continue;
+      const link = setOff(s, i, i, s.grid[i].landmark!);
+      if (link)
+        s.bulletins.push({
+          day: s.day,
+          text: CHAIN_NOTE[link.kind](link.name),
+          // Filed under the latest story, which is usually what started the fire.
+          source: s.log[s.log.length - 1]?.result.headline ?? "",
+        });
+    }
   }
 
   // Floods recede, occasionally damage buildings, and can spill into nearby
@@ -567,9 +587,444 @@ function applyOp(s: CityState, op: TileOp) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Impact physics: what an event does to what's around it. Everything here is
+// drawn from the city's RNG, so a replay lands every brick in the same place.
+// ---------------------------------------------------------------------------
+
+const inBounds = (x: number, y: number) => x >= 0 && y >= 0 && x < N && y < N;
+
+/** Chebyshev distance in tiles. */
+function cheb(a: number, b: number): number {
+  const p = xy(a);
+  const q = xy(b);
+  return Math.max(Math.abs(p.x - q.x), Math.abs(p.y - q.y));
+}
+
+/** Tiles within r of c (Chebyshev), nearest rings first. */
+function ring(c: number, r: number, from = 0): number[] {
+  const { x, y } = xy(c);
+  const out: [number, number][] = [];
+  for (let dy = -r; dy <= r; dy++)
+    for (let dx = -r; dx <= r; dx++) {
+      const d = Math.max(Math.abs(dx), Math.abs(dy));
+      if (d < from || !inBounds(x + dx, y + dy)) continue;
+      out.push([idx(x + dx, y + dy), d]);
+    }
+  return out.sort((a, b) => a[1] - b[1] || a[0] - b[0]).map(([i]) => i);
+}
+
+/** Tiles on a straight line through c, from offset `from` down to `to`. */
+function line(c: number, angle: number, from: number, to: number): number[] {
+  const { x, y } = xy(c);
+  const out: number[] = [];
+  for (let o = from; o >= to; o -= 0.5) {
+    const tx = Math.round(x + Math.cos(angle) * o);
+    const ty = Math.round(y + Math.sin(angle) * o);
+    if (!inBounds(tx, ty)) continue;
+    const i = idx(tx, ty);
+    if (out[out.length - 1] !== i && !out.includes(i)) out.push(i);
+  }
+  return out;
+}
+
+function tileChanged(a: Tile, b: Tile) {
+  return a.kind !== b.kind || a.fire !== b.fire || a.flood !== b.flood || a.builtDay !== b.builtDay;
+}
+
+/** Where the event lands: the heart of the biggest cluster of changes. */
+function findEpicentre(before: Tile[], s: CityState, result: EventResult): number {
+  const changed: number[] = [];
+  for (let i = 0; i < before.length; i++) if (tileChanged(before[i], s.grid[i])) changed.push(i);
+  if (!changed.length) {
+    // Nothing changed on the map: the street nearest the targeted district.
+    const target = result.tile_ops[0]?.target;
+    const d = DISTRICTS.find((dd) => dd.id === target);
+    const [cx, cy] = d
+      ? [(d.rect[0] + d.rect[2]) / 2, (d.rect[1] + d.rect[3]) / 2]
+      : [CENTER, CENTER];
+    let best = idx(Math.round(cx), Math.round(cy));
+    let bestD = Infinity;
+    s.grid.forEach((t, i) => {
+      if (t.kind !== "road") return;
+      const { x, y } = xy(i);
+      const dist = Math.hypot(x - cx, y - cy);
+      if (dist < bestD) [best, bestD] = [i, dist];
+    });
+    return best;
+  }
+  let mx = 0;
+  let my = 0;
+  for (const i of changed) {
+    mx += xy(i).x;
+    my += xy(i).y;
+  }
+  mx /= changed.length;
+  my /= changed.length;
+  const d = (i: number) => Math.hypot(xy(i).x - mx, xy(i).y - my);
+  const core = [...changed].sort((a, b) => d(a) - d(b) || a - b);
+  core.length = Math.max(1, Math.ceil(core.length / 2));
+  const cx = core.reduce((acc, i) => acc + xy(i).x, 0) / core.length;
+  const cy = core.reduce((acc, i) => acc + xy(i).y, 0) / core.length;
+  return core.reduce((best, i) =>
+    Math.hypot(xy(i).x - cx, xy(i).y - cy) < Math.hypot(xy(best).x - cx, xy(best).y - cy)
+      ? i
+      : best,
+  );
+}
+
+/** Damage an event may add on top of what the newsroom asked for. */
+const COLLATERAL_BUDGET = { minor: 3, citywide: 7, apocalyptic: 16 };
+
+interface Damage {
+  s: CityState;
+  budget: number;
+  hit: number[];
+}
+
+/** Knock a building down. */
+function wreck(d: Damage, i: number): boolean {
+  if (d.budget <= 0 || !isOccupied(d.s.grid[i])) return false;
+  setKind(d.s, i, "rubble");
+  d.budget -= 1;
+  d.hit.push(i);
+  return true;
+}
+
+/** Set a building or a stand of trees alight. */
+function ignite(s: CityState, i: number, days = 3): boolean {
+  const t = s.grid[i];
+  if (t.fire > 0 || !(isBuilding(t) || t.kind === "forest")) return false;
+  if (t.landmark?.shape === "plaza" || t.landmark?.shape === "crater") return false;
+  t.fire = days + randInt(s, 2);
+  return true;
+}
+
+/** Put a tile under water. */
+function drench(s: CityState, i: number): boolean {
+  const t = s.grid[i];
+  if (t.kind === "water" || t.flood > 0) return false;
+  t.flood = 2 + randInt(s, 2);
+  t.fire = 0;
+  return true;
+}
+
+/** Actors whose arrival physically shoves the town around. */
+const PHYSICAL = new Set<ActorKind>([
+  "meteor",
+  "giant_object",
+  "whale",
+  "kaiju",
+  "tornado",
+  "wave",
+  "earthquake",
+  "sinkhole",
+  "landslide",
+  "storm",
+  "ufo",
+]);
+
+const SCALE_STEP = { minor: 0, citywide: 1, apocalyptic: 2 };
+
+function collateral(s: CityState, result: EventResult, epi: number, angle: number) {
+  const actor = result.spectacle.actors.find((a) => PHYSICAL.has(a.kind));
+  const d: Damage = { s, budget: COLLATERAL_BUDGET[result.scale], hit: [] };
+  const trail: number[] = [];
+  if (!actor) return { trail, blast: d.hit };
+  const step = SCALE_STEP[result.scale];
+  const big = actor.size >= 5 ? 1 : 0;
+
+  switch (actor.kind) {
+    case "meteor":
+    case "giant_object":
+    case "whale": {
+      // A blast ring: the closer to the epicentre, the likelier to go down.
+      const r = 1 + big + (step === 2 ? 1 : 0);
+      wreck(d, epi);
+      for (const i of ring(epi, r, 1)) {
+        const odds = [1, 0.7, 0.4, 0.2][cheb(i, epi)] ?? 0;
+        if (rand(s) < odds) wreck(d, i);
+      }
+      if (actor.kind === "meteor") {
+        // Burning fragments land beyond the blast.
+        let lit = 0;
+        for (const i of ring(epi, r + 1, r + 1))
+          if (lit < 1 + step && rand(s) < 0.3 && ignite(s, i)) {
+            lit += 1;
+            d.hit.push(i);
+          }
+        // The crater stays.
+        const t = s.grid[epi];
+        const craterNear = ring(epi, 2).some((i) => s.grid[i].landmark?.shape === "crater");
+        if (!craterNear && (t.kind === "rubble" || t.kind === "empty")) {
+          setKind(s, epi, "landmark", {
+            name: "The impact crater",
+            shape: "crater",
+            color: "#4a3a2e",
+            height: 0.35,
+          });
+          d.hit.push(epi);
+        }
+      }
+      if (actor.kind === "whale")
+        for (const i of ring(epi, 1, 1)) if (rand(s) < 0.6 && drench(s, i)) d.hit.push(i);
+      break;
+    }
+    case "kaiju":
+    case "tornado": {
+      // Whatever it walks (or spins) through comes down, in the order it gets there.
+      const reach = actor.kind === "kaiju" ? 5 + 2 * step : 6 + 3 * step;
+      const odds = actor.kind === "kaiju" ? 0.75 : 0.55;
+      for (const i of line(epi, angle, reach, -reach))
+        if (rand(s) < odds && wreck(d, i)) trail.push(i);
+      break;
+    }
+    case "wave": {
+      // The surge rolls in from the west and floods a band of streets.
+      const { x, y } = xy(epi);
+      const half = step;
+      const back = [3, 6, 8][step];
+      for (let dx = -back; dx <= 2; dx++)
+        for (let dy = -half; dy <= half; dy++) {
+          if (!inBounds(x + dx, y + dy)) continue;
+          const i = idx(x + dx, y + dy);
+          if (dx >= -2 && rand(s) < 0.2 && wreck(d, i)) trail.push(i);
+          else if (drench(s, i)) trail.push(i);
+        }
+      break;
+    }
+    case "earthquake": {
+      // Cracks run out from the epicentre; tall buildings go first.
+      const odds: Partial<Record<TileKind, number>> = { tower: 0.45, shop: 0.25, house: 0.2 };
+      for (const i of ring(epi, 3 + step)) if (rand(s) < (odds[s.grid[i].kind] ?? 0)) wreck(d, i);
+      break;
+    }
+    case "sinkhole":
+    case "landslide": {
+      const r = actor.kind === "sinkhole" ? 1 : 2;
+      for (const i of ring(epi, r))
+        if (rand(s) < (actor.kind === "sinkhole" ? 0.6 : 0.5)) wreck(d, i);
+      break;
+    }
+    case "storm": {
+      // Lightning finds the tallest things around.
+      const strikes = [1, 2, 4][step];
+      const targets = ring(epi, 5).filter((i) => {
+        const t = s.grid[i];
+        return (
+          t.kind === "tower" || t.kind === "landmark" || (t.kind === "forest" && rand(s) < 0.2)
+        );
+      });
+      for (let k = 0; k < strikes && targets.length; k++) {
+        const i = targets.splice(randInt(s, targets.length), 1)[0];
+        if (ignite(s, i)) d.hit.push(i);
+      }
+      break;
+    }
+    case "ufo": {
+      // The beam takes a house with it.
+      const home = ring(epi, 1).find((i) => isOccupied(s.grid[i]));
+      if (home !== undefined) {
+        setKind(s, home, "empty");
+        d.hit.push(home);
+      }
+      break;
+    }
+  }
+  return { trail, blast: d.hit };
+}
+
+/** Landmarks that go off when damage reaches them. */
+const SPECIAL: Partial<Record<Landmark["shape"], ChainKind>> = {
+  gas_station: "explosion",
+  water_tower: "burst",
+  radio_tower: "blackout",
+  lab: "breach",
+  junkyard: "blaze",
+};
+
+function specialLandmarks(grid: Tile[]): number[] {
+  const out: number[] = [];
+  grid.forEach((t, i) => {
+    if (t.kind === "landmark" && t.landmark && SPECIAL[t.landmark.shape]) out.push(i);
+  });
+  return out;
+}
+
+const CHAIN_STATS: Record<ChainKind, Partial<Stats>> = {
+  explosion: { happiness: -3, pollution: 4, money: -3000 },
+  burst: { happiness: -1, money: -1500 },
+  blackout: { happiness: -2, money: -1000 },
+  breach: { happiness: -2, rift: 8 },
+  blaze: { happiness: -1, pollution: 8 },
+  topple: {},
+};
+
+const cap = (name: string) => name.charAt(0).toUpperCase() + name.slice(1);
+
+const CHAIN_LABEL: Record<ChainKind, (name: string) => string> = {
+  explosion: (n) => `${cap(n)} explodes`,
+  burst: (n) => `${cap(n)} bursts`,
+  blackout: (n) => `${cap(n)} comes down; the lights go out`,
+  breach: (n) => `Alarms at ${n}`,
+  blaze: (n) => `${cap(n)} catches fire`,
+  topple: () => "",
+};
+
+/** The Courier's line when a chain reaction goes off between events. */
+export const CHAIN_NOTE: Record<ChainKind, (name: string) => string> = {
+  explosion: (n) =>
+    `${cap(n)} went up with a bang heard three counties over. The fire chief blames "a dropped cigarette."`,
+  burst: (n) =>
+    `${cap(n)} burst and sent a wall of water down the street. The council calls it "an unscheduled flushing."`,
+  blackout: (n) =>
+    `${cap(n)} came down across the power lines. The lights are out until further notice.`,
+  breach: (n) => `Alarms sounded all night at ${n}. A spokesman says the new fence is "for deer."`,
+  blaze: (n) =>
+    `The tyre pile at ${n} caught fire. Residents are asked to keep their windows shut.`,
+  topple: () => "",
+};
+
+/** One landmark going off. Returns what it did, with the landmark's name. */
+function setOff(
+  s: CityState,
+  i: number,
+  from: number,
+  lm: Landmark,
+): (ChainLink & { name: string }) | null {
+  const kind = SPECIAL[lm.shape];
+  if (!kind) return null;
+  const tiles = [i];
+  const add = (j: number, ok: boolean) => ok && !tiles.includes(j) && tiles.push(j);
+  switch (kind) {
+    case "explosion":
+      setKind(s, i, "rubble");
+      for (const j of ring(i, 2, 1))
+        if (tiles.length < 8 && (cheb(i, j) === 1 || rand(s) < 0.35)) add(j, ignite(s, j));
+      break;
+    case "burst":
+      setKind(s, i, "rubble");
+      // The water puts out any fire it reaches.
+      for (const j of ring(i, 2, 1)) if (tiles.length < 14) add(j, drench(s, j));
+      break;
+    case "blackout": {
+      // The mast falls across whatever is beside it.
+      setKind(s, i, "rubble");
+      const fall = rand(s) * Math.PI * 2;
+      for (const j of line(i, fall, 3, 1)) {
+        if (!isOccupied(s.grid[j])) continue;
+        setKind(s, j, "rubble");
+        add(j, true);
+      }
+      break;
+    }
+    case "breach":
+      s.grid[i].fire = 0;
+      break;
+    case "blaze":
+      s.grid[i].fire = Math.max(s.grid[i].fire, 5);
+      for (const j of ring(i, 1, 1)) if (tiles.length < 4) add(j, ignite(s, j));
+      break;
+  }
+  addStats(s.stats, {
+    population: 0,
+    happiness: 0,
+    money: 0,
+    pollution: 0,
+    rift: 0,
+    ...CHAIN_STATS[kind],
+  });
+  return { kind, tile: i, from, tiles, label: CHAIN_LABEL[kind](lm.name), name: lm.name };
+}
+
+/**
+ * Knock-on reactions spreading out from the damage: apartment blocks topple
+ * onto their neighbours, and landmarks caught in it go off, which can set
+ * off others in turn.
+ */
+function chainReactions(s: CityState, before: Tile[], damaged: number[]): ChainLink[] {
+  const chain: ChainLink[] = [];
+  // Towers fall onto the house next door.
+  let topples = 0;
+  for (const i of damaged) {
+    if (topples >= 3) break;
+    if (before[i].kind !== "tower" || s.grid[i].kind !== "rubble" || rand(s) >= 0.4) continue;
+    const next = NEIGHBORS[i].filter((n) => {
+      const { x, y } = xy(n);
+      const p = xy(i);
+      return (x === p.x || y === p.y) && isOccupied(s.grid[n]);
+    });
+    if (!next.length) continue;
+    const n = pick(s, next);
+    setKind(s, n, "rubble");
+    chain.push({ kind: "topple", tile: i, from: i, tiles: [n], label: "" });
+    topples += 1;
+  }
+
+  // Landmarks, as they were before the event (a flattened one still counts).
+  const specials: [number, Landmark][] = [];
+  before.forEach((t, i) => {
+    if (t.kind === "landmark" && t.landmark && SPECIAL[t.landmark.shape])
+      specials.push([i, t.landmark]);
+  });
+  s.grid.forEach((t, i) => {
+    if (
+      t.kind === "landmark" &&
+      t.landmark &&
+      SPECIAL[t.landmark.shape] &&
+      !specials.some(([j]) => j === i)
+    )
+      specials.push([i, t.landmark]);
+  });
+  const spent = new Set<number>();
+  let frontier = [...damaged, ...chain.flatMap((l) => l.tiles)];
+  for (let depth = 0; depth < 3 && frontier.length; depth++) {
+    const reached: number[] = [];
+    for (const [i, lm] of specials) {
+      if (spent.has(i)) continue;
+      const trigger = frontier.find((j) => cheb(i, j) <= 1);
+      if (trigger === undefined) continue;
+      // Caught by the edge of it: a fair chance it holds.
+      if (trigger !== i && rand(s) >= 0.6) continue;
+      spent.add(i);
+      const link = setOff(s, i, trigger, lm);
+      if (!link) continue;
+      const { name: _n, ...rest } = link;
+      chain.push(rest);
+      reached.push(...link.tiles);
+    }
+    frontier = reached;
+  }
+  return chain;
+}
+
+/** Adds the physical consequences of an event and returns where it hit. */
+function applyPhysics(s: CityState, before: Tile[], result: EventResult): ImpactInfo {
+  const tile = findEpicentre(before, s, result);
+  const angle = rand(s) * Math.PI * 2;
+  const { trail, blast } = collateral(s, result, tile, angle);
+  const damaged: number[] = [];
+  for (let i = 0; i < before.length; i++) {
+    const a = before[i];
+    const b = s.grid[i];
+    if ((b.kind === "rubble" && a.kind !== "rubble") || (b.fire > 0 && a.fire === 0))
+      damaged.push(i);
+  }
+  // Nearest the epicentre first, so reactions spread outwards.
+  damaged.sort((a, b) => cheb(a, tile) - cheb(b, tile) || a - b);
+  const chain = chainReactions(s, before, damaged);
+  return { tile, angle, trail, blast, chain };
+}
+
 const SUPERNATURAL_RIFT_BONUS = { minor: 1, citywide: 3, apocalyptic: 8 };
 
-export function applyEvent(prev: CityState, input: string, result: EventResult): CityState {
+export function applyEvent(
+  prev: CityState,
+  input: string,
+  result: EventResult,
+  /** Impact physics and chain reactions; off only when replaying older events. */
+  physics = true,
+): CityState {
   const s = cloneState(prev);
   const st = s.stats;
   addStats(st, result.stat_changes);
@@ -577,6 +1032,7 @@ export function applyEvent(prev: CityState, input: string, result: EventResult):
   // has already identified a positive rift effect.
   if (result.stat_changes.rift > 0) st.rift += SUPERNATURAL_RIFT_BONUS[result.scale];
   for (const op of result.tile_ops.slice(0, 6)) applyOp(s, op);
+  const impact = physics ? applyPhysics(s, prev.grid, result) : undefined;
   if (result.ongoing) {
     s.ongoing.push({
       label: result.ongoing.label,
@@ -592,7 +1048,9 @@ export function applyEvent(prev: CityState, input: string, result: EventResult):
     });
   }
   clampStats(st);
-  s.log.push({ day: s.day, input, result });
+  s.log.push(
+    physics ? { day: s.day, input, result, physics: 1, impact } : { day: s.day, input, result },
+  );
   // An event can revive a collapsed city (e.g. "a thousand settlers arrive").
   const c = countKinds(s.grid);
   if (c.house + c.shop + c.tower > 0 && st.population >= 1) s.collapsed = false;
@@ -616,7 +1074,7 @@ export function replay(seed: number, log: EventRecord[], finalDay: number): City
   let s = createCity(seed);
   for (const ev of log) {
     while (s.day < ev.day && !s.collapsed) s = tick(s);
-    s = applyEvent(s, ev.input, ev.result);
+    s = applyEvent(s, ev.input, ev.result, ev.physics === 1);
   }
   while (s.day < finalDay && !s.collapsed) s = tick(s);
   return s;

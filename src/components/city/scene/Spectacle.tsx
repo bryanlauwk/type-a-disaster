@@ -6,6 +6,7 @@ import * as THREE from "three";
 import type {
   Actor,
   ActorKind,
+  CityState,
   ActorShape,
   CrowdReaction,
   Recipe,
@@ -29,6 +30,8 @@ import { ACTOR_LIBRARY, LIBRARY_IMPACT } from "./ActorLibrary";
 import { REAL_MODELS, type RealModel } from "./realModels";
 import { withSpecGloss } from "./specGloss";
 import { Puffs } from "./vfx";
+import { RippleFx } from "./RippleFx";
+import { planHits, type TileHit } from "./ripple";
 
 export { AFTERMATH };
 export interface SpectacleRun {
@@ -38,6 +41,11 @@ export interface SpectacleRun {
   responders: Responder[];
   focus: { x: number; z: number };
   radius: number;
+  /** Heading of travellers, shared with the simulation's trail. */
+  heading?: number;
+  /** The town before and after the event, to play the damage tile by tile. */
+  before?: CityState;
+  after?: CityState;
 }
 
 /** Seconds after start when each kind of actor makes contact. */
@@ -680,15 +688,15 @@ function Ufo({ a, focus, getT, impact }: ActorProps) {
   );
 }
 
-function Tornado({ a, focus, getT, impact, seed }: ActorProps) {
+function Tornado({ a, focus, getT, impact, seed, heading }: ActorProps) {
   const ref = useRef<THREE.Group>(null);
   const funnel = useRef<THREE.Mesh>(null);
   const debris = useRef<THREE.InstancedMesh>(null);
   const s = 0.4 + a.size * 0.2;
   const dir = useMemo(() => {
-    const ang = hash(seed, 3) * Math.PI * 2;
+    const ang = heading ?? hash(seed, 3) * Math.PI * 2;
     return new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
-  }, [seed]);
+  }, [seed, heading]);
   const funnelGeometry = useMemo(
     () =>
       new THREE.LatheGeometry(
@@ -1545,17 +1553,30 @@ export function SpectacleView({
   run,
   bus,
   onImpact,
+  onReveal,
   onDone,
 }: {
   run: SpectacleRun;
   bus: WorldBus;
+  /** Called once every tile has changed: the event's full result can land. */
   onImpact: (id: number) => void;
+  /** Tiles whose damage has just arrived. */
+  onReveal?: (id: number, hits: TileHit[]) => void;
   onDone: (id: number) => void;
 }) {
   const start = useRef<number | null>(null);
   const fired = useRef(false);
-  const done = useRef(false);
+  const committed = useRef(false);
+  const revealed = useRef(0);
+  const lastReveal = useRef(-1);
   const impact = impactTime(run.actors);
+  const hits = useMemo(
+    () => (run.before && run.after ? planHits(run.before, run.after, run.actors, impact) : []),
+    // The plan depends on the kinds of actors, not on models swapped in later.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [run.before, run.after, impact],
+  );
+  const done = useRef(false);
   // Spectacle time advances at most 0.1 s a frame: a stalled frame (say,
   // compiling a new model's shaders) pauses the show instead of skipping it.
   const elapsed = useRef(0);
@@ -1563,13 +1584,29 @@ export function SpectacleView({
   const primary = run.actors[0];
 
   useFrame(({ clock }, delta) => {
-    if (start.current === null) start.current = clock.elapsedTime;
-    else elapsed.current += Math.min(delta, 0.1);
+    if (start.current === null) {
+      start.current = clock.elapsedTime;
+      // Tell the page the scene is running, so it waits for the show.
+      onReveal?.(run.id, []);
+    } else elapsed.current += Math.min(delta, 0.1);
     const t = getT();
     const now = clock.elapsedTime;
+    // Damage arrives tile by tile, batched so the town redraws a few times a second.
+    if (revealed.current < hits.length && t - lastReveal.current >= 0.12) {
+      const due: TileHit[] = [];
+      while (revealed.current < hits.length && hits[revealed.current].at <= t)
+        due.push(hits[revealed.current++]);
+      if (due.length) {
+        lastReveal.current = t;
+        onReveal?.(run.id, due);
+      }
+    }
+    if (!committed.current && t >= impact && (revealed.current >= hits.length || !onReveal)) {
+      committed.current = true;
+      onImpact(run.id);
+    }
     if (!fired.current && t >= impact) {
       fired.current = true;
-      onImpact(run.id);
       const big = primary ? primary.size : 2;
       bus.shake = Math.max(
         bus.shake,
@@ -1633,6 +1670,7 @@ export function SpectacleView({
               impact: i === 0 ? impact : IMPACT_AT[a.kind],
               bus,
               seed: run.id * 31 + i,
+              heading: run.heading,
             }}
             radius={run.radius}
           />
@@ -1649,6 +1687,7 @@ export function SpectacleView({
           fiery={primary.kind === "meteor"}
         />
       )}
+      {hits.length > 0 && <RippleFx hits={hits} getT={getT} bus={bus} seed={run.id} />}
     </group>
   );
 }

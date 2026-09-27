@@ -15,6 +15,8 @@ export interface ActorProps {
   impact: number;
   bus: WorldBus;
   seed: number;
+  /** Heading in radians for travellers, matching the trail the sim wrecked. */
+  heading?: number;
 }
 
 export const ease = (x: number) => Math.min(1, Math.max(0, x));
@@ -144,15 +146,16 @@ export function Stomper({
   impact,
   bus,
   seed,
+  heading,
   children,
 }: ActorProps & { children: React.ReactNode }) {
   const ref = useRef<THREE.Group>(null);
   const lastStep = useRef(0);
   const s = 0.3 + a.size * 0.3;
   const dir = useMemo(() => {
-    const ang = hash(seed, 7) * Math.PI * 2;
+    const ang = heading ?? hash(seed, 7) * Math.PI * 2;
     return new THREE.Vector3(Math.cos(ang), 0, Math.sin(ang));
-  }, [seed]);
+  }, [seed, heading]);
   useFrame(() => {
     const g = ref.current;
     if (!g) return;

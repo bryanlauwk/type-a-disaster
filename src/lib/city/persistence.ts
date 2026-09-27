@@ -46,7 +46,8 @@ export function loadCity(): CityState | null {
  * recipes and model links would only bloat saves and share links. Credits stay.
  */
 function lean(log: EventRecord[]): EventRecord[] {
-  return log.map((e) => ({
+  // Impacts are recomputed on replay.
+  return log.map(({ impact: _i, ...e }) => ({
     ...e,
     result: {
       ...e.result,
@@ -123,6 +124,8 @@ const sharedSchema = z.object({
         day: z.number().int().min(0),
         input: z.string().max(200),
         result: eventResultSchema,
+        // Newer events get impact physics; older ones replay as they were.
+        physics: z.literal(1).optional(),
       }),
     )
     .max(200),
