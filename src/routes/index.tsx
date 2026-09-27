@@ -1,15 +1,6 @@
 import { ClientOnly, createFileRoute } from "@tanstack/react-router";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
-import {
-  ChevronUp,
-  FastForward,
-  FlipVertical2,
-  Pause,
-  Play,
-  RotateCcw,
-  Share2,
-  Tag,
-} from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronUp, FastForward, Pause, Play, RotateCcw, Share2, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
@@ -23,480 +14,299 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Newspaper } from "@/components/city/Newspaper";
+import { GodPanel, POWER_RADIUS, WHOLE_ISLAND, type Armed } from "@/components/island/GodPanel";
+import { CaveWall } from "@/components/island/CaveWall";
+import { planReveal, type ActRun, type TileReveal } from "@/components/island/Acts";
+import type { Cursor, SimClock } from "@/components/island/IslandScene";
+import { act, affordable, createWorld, REGION_NAMES, seasonOf, tick } from "@/lib/island/sim";
+import { totalOf } from "@/lib/island/ecology";
+import { POWER_DEFS, type PowerGroup } from "@/lib/island/powers";
+import { HERBIVORES, PREDATORS, SPECIES_DEFS } from "@/lib/island/species";
+import { STAGES } from "@/lib/island/tribe";
+import { LANDMARK_NAMES } from "@/lib/island/names";
 import {
-  MAX_CREDITS,
-  REFILL_MS,
-  clearCity,
-  currentCredits,
+  clearIsland,
   decodeShare,
   encodeShare,
-  loadCity,
-  loadCredits,
-  saveCity,
-  saveCredits,
-  spendCredits,
-  type Credits,
-} from "@/lib/city/persistence";
-import {
-  applyEvent,
-  changedTiles,
-  countKinds,
-  createCity,
-  natureScore,
-  tick,
-} from "@/lib/city/simulation";
-import { districtAt, DISTRICTS } from "@/lib/city/hollow";
-import type { SimClock, SpectacleRun, TileHit } from "@/components/city/CityScene";
-import { hourOf } from "@/components/city/scene/common";
-import { withRealModels } from "@/components/city/scene/realModels";
-import { simulateEvent } from "@/lib/city/simulate.functions";
-import { PLACES, shapeResult, type DisasterPreset, type Place } from "@/lib/city/presets";
-import { DisasterPicker } from "@/components/city/DisasterPicker";
-import {
-  GRID_SIZE,
-  SCALE_COST,
-  type Actor,
-  type CityState,
-  type EventResult,
-} from "@/lib/city/types";
+  loadIsland,
+  saveIsland,
+} from "@/lib/island/persistence";
+import { describeAct, milestoneEntry, plainEntry } from "@/lib/island/story";
+import { tellStory } from "@/lib/island/chronicle.functions";
+import { SPECIES, type Chronicle, type WorldState } from "@/lib/island/types";
 import { cn } from "@/lib/utils";
 
-const CityScene = lazy(() => import("@/components/city/CityScene"));
+const IslandScene = lazy(() => import("@/components/island/IslandScene"));
 
 export const Route = createFileRoute("/")({
   component: Index,
-  head: () => ({
-    meta: [
-      { title: "Type-a-Disaster: Maple Hollow" },
-      {
-        name: "description",
-        content:
-          "Maple Hollow, 1985: a sleepy small town with something underneath. Type what happens to it, watch it unfold, flip to the Upside Down, and read the Courier's straight-faced report.",
-      },
-    ],
-  }),
 });
 
-const DAY_MS = 12000;
-const C = (GRID_SIZE - 1) / 2;
-
-const compact = (n: number) => {
-  const a = Math.abs(n);
-  if (a >= 1e6) return `${(n / 1e6).toFixed(a >= 1e7 ? 1 : 2)}M`;
-  if (a >= 1e4) return `${Math.round(n / 1e3)}k`;
-  return Math.round(n).toLocaleString();
-};
-
-/** Where on the map an event lands, in world coordinates. */
-function eventFocus(before: CityState, after: CityState, result: EventResult) {
-  const tiles = changedTiles(before, after);
-  if (!tiles.length) {
-    // Nothing on the map changed: play it out on the street nearest the
-    // targeted district (or the middle of town), where it can be seen.
-    const target = result.tile_ops[0]?.target;
-    const d = DISTRICTS.find((dd) => dd.id === target);
-    const [cx, cy] = d ? [(d.rect[0] + d.rect[2]) / 2, (d.rect[1] + d.rect[3]) / 2] : [C, C];
-    let best = -1;
-    after.grid.forEach((t, i) => {
-      if (t.kind !== "road") return;
-      const dist = Math.hypot((i % GRID_SIZE) - cx, Math.floor(i / GRID_SIZE) - cy);
-      if (best < 0 || dist < Math.hypot((best % GRID_SIZE) - cx, Math.floor(best / GRID_SIZE) - cy))
-        best = i;
-    });
-    if (best < 0) return { x: cx - C, z: cy - C, radius: 2.5 };
-    return { x: (best % GRID_SIZE) - C, z: Math.floor(best / GRID_SIZE) - C, radius: 2.5 };
-  }
-  // Centre on the biggest cluster: the mean, then the changed tile nearest it.
-  let mx = 0;
-  let mz = 0;
-  for (const i of tiles) {
-    mx += (i % GRID_SIZE) - C;
-    mz += Math.floor(i / GRID_SIZE) - C;
-  }
-  mx /= tiles.length;
-  mz /= tiles.length;
-  const near = tiles
-    .map((i) => ({ x: (i % GRID_SIZE) - C, z: Math.floor(i / GRID_SIZE) - C }))
-    .sort((p, q) => Math.hypot(p.x - mx, p.z - mz) - Math.hypot(q.x - mx, q.z - mz));
-  const core = near.slice(0, Math.max(1, Math.ceil(near.length / 2)));
-  const x = core.reduce((acc, p) => acc + p.x, 0) / core.length;
-  const z = core.reduce((acc, p) => acc + p.z, 0) / core.length;
-  const spread = Math.max(...core.map((p) => Math.hypot(p.x - x, p.z - z)));
-  return { x, z, radius: Math.min(6, Math.max(1.5, spread + 1)) };
-}
-
-function GameClock({ clock }: { clock: SimClock }) {
-  const [, force] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => force((n) => n + 1), 500);
-    return () => clearInterval(id);
-  }, []);
-  const phase = clock.paused
-    ? null
-    : Math.min(1, Math.max(0, (performance.now() - clock.tickAt) / clock.dayMs));
-  if (phase === null) return <span>paused</span>;
-  const h = hourOf(phase);
-  const hh = Math.floor(h);
-  const mm = Math.floor((h - hh) * 6) * 10;
-  return (
-    <span>
-      {String(hh).padStart(2, "0")}:{String(mm).padStart(2, "0")}
-    </span>
-  );
-}
+const DAY_MS = 10_000;
+const FAST_MS = 2_500;
+/** Acts worth a story on the cave wall. */
+const STORIED = (p: Armed["power"]) =>
+  POWER_DEFS[p].dramatic || p === "introduce" || p === "evolve";
 
 const newSeed = () => Math.floor(Math.random() * 2 ** 31);
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "bad" | "good" }) {
-  return (
-    <div className="min-w-0 border border-ink/25 bg-paper/85 px-1.5 py-0.5 backdrop-blur-sm sm:px-2 sm:py-1">
-      <div className="truncate font-mono text-[8px] uppercase tracking-wider text-muted-foreground sm:text-[9px] sm:tracking-widest">
-        {label}
-      </div>
-      <div
-        className={cn(
-          "truncate font-mono text-xs font-semibold tabular-nums sm:text-sm",
-          tone === "bad" && "text-stamp",
-          tone === "good" && "text-leaf",
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
+const compact = (n: number) =>
+  n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${Math.round(n)}`;
 
 function Index() {
-  const [city, setCity] = useState<CityState | null>(null);
+  const [world, setWorld] = useState<WorldState | null>(null);
   const [shared, setShared] = useState(false);
   const [paused, setPaused] = useState(false);
   const [fast, setFast] = useState(false);
   const [labels, setLabels] = useState(true);
-  // On phones the Courier folds down to its latest headline until tapped.
-  const [paperOpen, setPaperOpen] = useState(false);
-  // Landmark labels crowd a phone screen; start with them off there.
-  useEffect(() => {
-    if (window.innerWidth < 640) setLabels(false);
-  }, []);
-  // Looking at the Upside Down instead of the town.
-  const [upsideDown, setUpsideDown] = useState(false);
-  const [credits, setCredits] = useState<Credits>({ credits: MAX_CREDITS, since: 0 });
-  // The disaster being lined up, and where it's aimed.
-  const [picked, setPicked] = useState<{ preset: DisasterPreset; place: Place } | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [busyFor, setBusyFor] = useState(0);
-  const [run, setRun] = useState<SpectacleRun | null>(null);
-  const [holding, setHolding] = useState(false);
-  const [tickAt, setTickAt] = useState(() => performance.now());
-  const [tremor, setTremor] = useState(0);
-  const cityRef = useRef<CityState | null>(null);
-  cityRef.current = city;
-  const tickAtRef = useRef(tickAt);
-  // The day starts (and resumes) from here: a morning city, not a dark one.
-  const pausedPhase = useRef<number | null>(0.1);
-  const pending = useRef<{
-    id: number;
-    before: CityState;
-    next: CityState;
-    /** Tiles whose damage has already landed on screen. */
-    revealed: Set<number>;
-    /** The 3D scene has started playing the event. */
-    playing: boolean;
-  } | null>(null);
-  const runId = useRef(0);
+  const [tickAt, setTickAt] = useState(() => performance.now() - 0.3 * DAY_MS);
+  const [group, setGroup] = useState<PowerGroup>("wrath");
+  const [armed, setArmed] = useState<Armed | null>(null);
+  const [hover, setHover] = useState<number | null>(null);
+  const [inspect, setInspect] = useState<number | null>(null);
+  const [run, setRun] = useState<ActRun | null>(null);
+  const [reveal, setReveal] = useState<TileReveal[]>([]);
+  const [display, setDisplay] = useState<WorldState | null>(null);
+  const [telling, setTelling] = useState(0);
+  const [wallOpen, setWallOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [dismissedCollapse, setDismissedCollapse] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
+  const runId = useRef(0);
+  const dramatic = !!run && !!display;
+  const dayMs = fast ? FAST_MS : DAY_MS;
 
-  // Load a shared city from the URL hash, else the saved city, else a fresh one.
+  // A shared island from the link, else your saved one, else a new one.
   useEffect(() => {
-    setCredits(loadCredits());
-    const hash = window.location.hash;
-    if (hash.startsWith("#c=")) {
-      decodeShare(hash.slice(3))
-        .then((c) => {
-          setCity(c);
+    const m = window.location.hash.match(/[#&]i=([\w-]+)/);
+    if (m) {
+      decodeShare(m[1])
+        .then((w) => {
+          setWorld(w);
           setShared(true);
         })
         .catch(() => {
-          toast.error("That share link is smudged beyond reading. Here's your own town instead.");
-          setCity(loadCity() ?? createCity(newSeed()));
+          toast.error("That island's map is smudged beyond reading. Here's your own instead.");
+          setWorld(loadIsland() ?? createWorld(newSeed()));
         });
-    } else {
-      setCity(loadCity() ?? createCity(newSeed()));
-    }
-  }, []);
-
-  // Simulation clock. Each tick is one day; the scene reads the phase in
-  // between to drive the sun. Time holds still while a spectacle lands.
-  const loaded = city !== null;
-  const collapsed = city?.collapsed ?? false;
-  const running = loaded && !paused && !collapsed && !holding;
-  const dayMs = fast ? DAY_MS / 4 : DAY_MS;
-  useEffect(() => {
-    if (!running) return;
-    if (pausedPhase.current !== null) {
-      tickAtRef.current = performance.now() - pausedPhase.current * dayMs;
-      setTickAt(tickAtRef.current);
-      pausedPhase.current = null;
-    }
-    let timer: ReturnType<typeof setTimeout>;
-    const schedule = () => {
-      const wait = Math.max(0, dayMs - (performance.now() - tickAtRef.current));
-      timer = setTimeout(() => {
-        tickAtRef.current = performance.now();
-        setTickAt(tickAtRef.current);
-        setCity((c) => (c ? tick(c) : c));
-        schedule();
-      }, wait);
-    };
-    schedule();
-    return () => {
-      clearTimeout(timer);
-      pausedPhase.current = Math.min(1, (performance.now() - tickAtRef.current) / dayMs);
-    };
-  }, [running, dayMs]);
-  const clock: SimClock = { tickAt, dayMs, paused: !running };
-
-  // Chain reactions arrive as bulletins; flash them as news alerts.
-  const seenBulletins = useRef<number | null>(null);
-  useEffect(() => {
-    if (!city) return;
-    const n = city.bulletins.length;
-    if (seenBulletins.current !== null && n > seenBulletins.current) {
-      for (const b of city.bulletins.slice(seenBulletins.current)) {
-        toast(`Update · Day ${b.day}`, { description: b.text, duration: 8000 });
-      }
-      setTremor((t) => t + 1);
-    }
-    seenBulletins.current = n;
-  }, [city]);
-
-  const commit = useCallback((id: number) => {
-    const p = pending.current;
-    if (!p || p.id !== id) return;
-    pending.current = null;
-    setCity(p.next);
-    setHolding(false);
-  }, []);
-  // Damage spreading through town: show the event's result tile by tile.
-  const reveal = useCallback((id: number, hits: TileHit[]) => {
-    const p = pending.current;
-    if (!p || p.id !== id) return;
-    p.playing = true;
-    if (!hits.length) return;
-    for (const h of hits) {
-      p.revealed.add(h.tile);
-      if (h.label)
-        toast(`Chain reaction · ${h.label}`, {
-          description: "Reported live by the Courier's man on the scene.",
-          duration: 6000,
-        });
-    }
-    const grid = p.before.grid.map((t, i) => (p.revealed.has(i) ? p.next.grid[i] : t));
-    setCity({ ...p.next, grid });
-  }, []);
-  const endSpectacle = useCallback((id: number) => {
-    setRun((r) => (r && r.id === id ? null : r));
-  }, []);
-
-  // Persist your own city. A shared one only becomes yours once you act on it.
-  useEffect(() => {
-    if (city && !shared) saveCity(city);
-  }, [city, shared]);
-
-  // Credit refill clock.
-  useEffect(() => {
-    const id = setInterval(() => {
-      setNow(Date.now());
-      setCredits((c) => currentCredits(c));
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  useEffect(() => {
-    if (!busy) {
-      setBusyFor(0);
       return;
     }
-    const started = Date.now();
-    const id = setInterval(() => setBusyFor(Math.floor((Date.now() - started) / 1000)), 500);
-    return () => clearInterval(id);
-  }, [busy]);
+    setWorld(loadIsland() ?? createWorld(newSeed()));
+  }, []);
 
-  const adoptShared = useCallback(() => {
+  // Keep your own island. A shared one becomes yours once you touch it.
+  useEffect(() => {
+    if (world && !shared) saveIsland(world);
+  }, [world, shared]);
+
+  const adopt = useCallback(() => {
     if (!shared) return;
     setShared(false);
     history.replaceState(null, "", window.location.pathname);
   }, [shared]);
 
-  const submit = async (preset: DisasterPreset, place: Place) => {
-    const event = preset.text(place.phrase);
-    if (!city || busy || holding) return;
-    const cost = SCALE_COST[preset.scale];
-    const available = currentCredits(credits);
-    if (available.credits < cost) {
-      const mins = Math.ceil(
-        (available.since + REFILL_MS * (cost - available.credits) - Date.now()) / 60000,
-      );
-      toast("Not enough event credits", {
-        description: `${preset.name} costs ${cost}. The presses reopen in about ${mins} min.`,
-      });
-      return;
-    }
-    setBusy(true);
-    try {
-      const kinds = countKinds(city.grid);
-      const districts: Record<string, number> = {};
-      city.grid.forEach((t, i) => {
-        if (t.kind === "house" || t.kind === "shop" || t.kind === "tower") {
-          const id = districtAt(i).id;
-          districts[id] = (districts[id] ?? 0) + 1;
+  // The island lives on by itself: one day per tick.
+  const halted = paused || dramatic || !world;
+  useEffect(() => {
+    if (halted) return;
+    const wait = Math.max(0, tickAt + dayMs - performance.now());
+    const id = setTimeout(() => {
+      setTickAt(performance.now());
+      setWorld((w) => {
+        if (!w) return w;
+        const n = tick(w);
+        if (n.tribe.stage > w.tribe.stage) {
+          const e = milestoneEntry(
+            n,
+            `The camp becomes a ${STAGES[n.tribe.stage].toLowerCase()}`,
+            "🏕️",
+          );
+          e.lines = [`${Math.round(n.tribe.pop)} people now live by the bay.`];
+          n.chronicle = [...n.chronicle, e];
+          toast(`The tribe's home is now a ${STAGES[n.tribe.stage].toLowerCase()}.`);
         }
+        return n;
       });
-      const hazards = city.grid.reduce(
-        (totals, tile) => {
-          if (tile.fire > 0) totals.burning++;
-          if (tile.flood > 0) totals.flooded++;
-          if (tile.kind === "rubble") totals.rubble++;
-          return totals;
-        },
-        { burning: 0, flooded: 0, rubble: 0 },
-      );
-      const res = await simulateEvent({
-        data: {
-          event,
-          staged: true,
-          city: {
-            name: city.name,
-            day: city.day,
-            stats: city.stats,
-            tiles: Object.fromEntries(Object.entries(kinds).filter(([, n]) => n > 0)),
-            nature: natureScore(city.grid, city.stats.pollution),
-            districts,
-            hazards,
-            ongoingEffects: city.ongoing
-              .slice(-8)
-              .map(({ label, daysLeft }) => ({ label, daysLeft })),
-            scheduledUpdates: city.scheduled.slice(0, 6).map((update) => ({
-              daysUntil: Math.max(0, update.day - city.day),
-              note: update.note,
-            })),
-            recentHeadlines: city.log.slice(-5).map((e) => e.result.headline),
-          },
-        },
-      });
-      if (!res.ok) {
-        toast.error(res.error, { duration: 12000 });
-        return;
-      }
-      const { refused } = res;
-      // The newsroom writes the story; the disaster plays out as designed.
-      const result = refused ? res.result : shapeResult(res.result, preset, place);
-      // Built-in actors are played by real, credited models where one exists.
-      const phone =
-        window.innerWidth < 640 ||
-        !!(navigator as { connection?: { saveData?: boolean } }).connection?.saveData;
-      result.spectacle.actors = withRealModels(result.spectacle.actors, phone);
-      adoptShared();
-      setDismissedCollapse(false);
+    }, wait);
+    return () => clearTimeout(id);
+  }, [halted, tickAt, dayMs, world]);
 
-      const before = cityRef.current;
-      if (!before) return;
-      const next = applyEvent(before, event, result);
-      if (refused) {
-        setCity(next);
-        toast("No charge", { description: "The council refused to print that one." });
+  // Resume the clock where it stopped rather than skipping a day.
+  const haltedAt = useRef<number | null>(null);
+  useEffect(() => {
+    if (halted) haltedAt.current = performance.now();
+    else if (haltedAt.current !== null) {
+      const lost = performance.now() - haltedAt.current;
+      haltedAt.current = null;
+      setTickAt((t) => t + lost);
+    }
+  }, [halted]);
+
+  const clock = useMemo<SimClock>(
+    () => ({ tickAt, dayMs, paused: halted }),
+    [tickAt, dayMs, halted],
+  );
+
+  const addEntry = useCallback((c: Chronicle) => {
+    setWorld((w) => (w ? { ...w, chronicle: [...w.chronicle, c].slice(-60) } : w));
+  }, []);
+
+  const cast = useCallback(
+    (a: Armed, tile: number) => {
+      if (!world || dramatic) return;
+      const action = { ...a, tile };
+      if (!affordable(world, action)) {
+        toast(
+          world.favour < POWER_DEFS[a.power].cost
+            ? "Not enough favour yet. It refills a little each day."
+            : "Needs an evolution point.",
+        );
         return;
       }
-      const spent = spendCredits(available, SCALE_COST[result.scale]);
-      setCredits(spent);
-      saveCredits(spent);
-      // Hold time, play the spectacle, and apply the damage on impact.
+      adopt();
+      const before = world;
+      const after = act(world, action);
+      const record = after.actions[after.actions.length - 1];
       const id = ++runId.current;
-      const focus = eventFocus(before, next, result);
-      const impact = next.log[next.log.length - 1]?.impact;
-      if (impact) {
-        // Centre on the epicentre the engine worked out, so trails line up.
-        focus.x = (impact.tile % GRID_SIZE) - C;
-        focus.z = Math.floor(impact.tile / GRID_SIZE) - C;
+      const r: ActRun = { id, record, before, after };
+      const big = !!POWER_DEFS[a.power].dramatic;
+      setWorld(after);
+      setRun(r);
+      if (big) {
+        setReveal(planReveal(r));
+        setDisplay(before);
+        setArmed(null);
+      } else {
+        setReveal([]);
+        setDisplay(null);
+        if (a.power === "guide") setArmed(null);
+        else if (WHOLE_ISLAND.has(a.power)) setArmed(null);
       }
-      pending.current = { id, before, next, revealed: new Set(), playing: false };
-      setHolding(true);
-      setRun({
-        id,
-        actors: result.spectacle.actors,
-        crowd: result.spectacle.crowd,
-        responders: result.spectacle.responders,
-        focus: { x: focus.x, z: focus.z },
-        radius: focus.radius,
-        heading: impact?.angle,
-        surge: impact?.surge,
-        before,
-        after: next,
+      if (a.power === "guide")
+        toast(`The tribe turns to ${a.focus === "balanced" ? "a bit of everything" : a.focus}.`);
+      if (a.power === "bless") toast("A good harvest. The tribe's stores fill.");
+      if (a.power === "rain") toast("Rain sweeps in off the sea.");
+      if (a.power === "drought") toast("The sky clears and stays clear.");
+
+      if (!STORIED(a.power)) return;
+      const input = describeAct(before, after, record);
+      setTelling((n) => n + 1);
+      tellStory({ data: input })
+        .then((res) => {
+          if (res.ok) addEntry({ day: after.day, ...res.entry, told: true });
+          else {
+            addEntry(plainEntry(after, record, input));
+            toast(res.error);
+          }
+        })
+        .catch(() => addEntry(plainEntry(after, record, input)))
+        .finally(() => setTelling((n) => n - 1));
+    },
+    [world, dramatic, adopt, addEntry],
+  );
+
+  const onReveal = useCallback(
+    (tiles: number[]) => {
+      if (!run) return;
+      setDisplay((d) => {
+        if (!d) return d;
+        const next = d.tiles.slice();
+        for (const i of tiles) next[i] = run.after.tiles[i];
+        return { ...d, tiles: next };
       });
-      // If the 3D scene isn't running (e.g. no WebGL), don't wait for it; if
-      // it is, give a long rampage time to finish, then land it regardless.
-      setTimeout(() => {
-        if (pending.current?.id === id && !pending.current.playing) commit(id);
-      }, 7000);
-      setTimeout(() => commit(id), 20000);
-    } catch (error) {
-      console.error(error);
-      toast.error("Couldn't reach the newsroom. Check your connection and try again.");
-    } finally {
-      setBusy(false);
-    }
-  };
+    },
+    [run],
+  );
+
+  const onActDone = useCallback(() => {
+    setRun(null);
+    setDisplay(null);
+    setReveal([]);
+  }, []);
+
+  const needsTarget = !!armed && !WHOLE_ISLAND.has(armed.power);
+  const targetReady = needsTarget && (armed.power !== "introduce" || !!armed.species);
+
+  const onPick = useCallback(
+    (tile: number) => {
+      if (!world) return;
+      if (targetReady && armed) {
+        cast(armed, tile);
+        return;
+      }
+      setInspect((cur) => (cur === tile ? null : tile));
+    },
+    [world, targetReady, armed, cast],
+  );
+
+  const castWhole = useCallback(
+    (a: Armed) => {
+      if (!world) return;
+      const tile =
+        a.power === "eruption"
+          ? world.tiles.findIndex((t) => t.landmark === "great_volcano")
+          : world.tribe.home;
+      cast(a, tile);
+    },
+    [world, cast],
+  );
+
+  const cursor = useMemo<Cursor | null>(() => {
+    if (!targetReady || !armed || hover === null) return null;
+    const wrath = POWER_DEFS[armed.power].group === "wrath";
+    return {
+      tile: hover,
+      radius: POWER_RADIUS[armed.power] ?? 2,
+      color: wrath ? "#ff6a3d" : "#fff1b8",
+    };
+  }, [targetReady, armed, hover]);
 
   const share = async () => {
-    if (!city) return;
-    const url = `${window.location.origin}/#c=${await encodeShare(city)}`;
+    if (!world) return;
+    const url = `${window.location.origin}/#i=${await encodeShare(world)}`;
     try {
-      if (navigator.share) {
-        await navigator.share({ title: `The ${city.name} Courier`, url });
-      } else {
+      if (navigator.share) await navigator.share({ title: "My island on Primordia", url });
+      else {
         await navigator.clipboard.writeText(url);
-        toast.success("Link copied", {
-          description: "Anyone with it can replay your town's history.",
-        });
+        toast("Link copied. Anyone who opens it gets your island, as it is today.");
       }
     } catch {
       /* share sheet dismissed */
     }
   };
 
-  const newCity = () => {
-    clearCity();
+  const newIsland = () => {
+    clearIsland();
     setShared(false);
     history.replaceState(null, "", window.location.pathname);
-    setCity(createCity(newSeed()));
-    setDismissedCollapse(false);
+    setRun(null);
+    setDisplay(null);
+    setArmed(null);
+    setInspect(null);
+    setWorld(createWorld(newSeed()));
+    setTickAt(performance.now() - 0.3 * DAY_MS);
   };
 
-  const c = currentCredits(credits, now);
-  const nextIn = Math.max(1, Math.ceil((c.since + REFILL_MS - now) / 60000));
-  const st = city?.stats;
+  const herb = world ? HERBIVORES.reduce((n, sp) => n + totalOf(world, sp), 0) : 0;
+  const pred = world ? PREDATORS.reduce((n, sp) => n + totalOf(world, sp), 0) : 0;
+  const latest = world?.chronicle[world.chronicle.length - 1];
 
   return (
     <div className="flex h-dvh flex-col bg-paper text-ink lg:flex-row">
       <Toaster position="top-center" />
       <main className="relative min-h-[30dvh] flex-1 overflow-hidden lg:min-h-0">
-        <div className="absolute inset-0">
+        <div className={cn("absolute inset-0", targetReady && "cursor-crosshair")}>
           <ClientOnly fallback={<SceneFallback />}>
             <Suspense fallback={<SceneFallback />}>
-              {city ? (
-                <CityScene
-                  city={city}
+              {world ? (
+                <IslandScene
+                  world={display ?? world}
                   clock={clock}
-                  spectacle={run}
-                  onImpact={commit}
-                  onReveal={reveal}
-                  onSpectacleDone={endSpectacle}
-                  tremor={tremor}
+                  onPick={onPick}
+                  onHover={setHover}
+                  cursor={cursor}
                   showLabels={labels}
-                  upsideDown={upsideDown}
+                  act={run}
+                  reveal={reveal}
+                  onReveal={onReveal}
+                  onActDone={onActDone}
                 />
               ) : (
                 <SceneFallback />
@@ -508,232 +318,142 @@ function Index() {
         {/* Masthead + stats */}
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap items-start justify-between gap-1.5 p-2 sm:gap-2 sm:p-3">
           <div className="pointer-events-auto border-2 border-ink bg-paper/90 px-2 py-1 backdrop-blur-sm sm:px-3 sm:py-1.5">
-            <p className="hidden font-mono text-[9px] uppercase tracking-[0.3em] text-muted-foreground sm:block">
-              Type-a-Disaster
-            </p>
             <h1 className="font-serif-d text-base font-black leading-tight sm:text-lg">
-              {city?.name ?? "Loading…"}
+              Primordia
             </h1>
             <p className="font-mono text-[10px] text-muted-foreground">
-              Day {city?.day ?? 0} · <GameClock clock={clock} />
+              Day {world?.day ?? 0} ·{" "}
+              {world ? (seasonOf(world.day) === "wet" ? "wet season" : "dry season") : "…"}
             </p>
-            {upsideDown && (
-              <p className="font-mono text-[9px] font-semibold uppercase tracking-[0.25em] text-stamp">
-                The Upside Down
-              </p>
-            )}
           </div>
-          {st && (
-            <div className="pointer-events-auto grid w-full grid-cols-6 gap-1 sm:w-auto">
-              <Stat label="Pop." value={compact(st.population)} />
+          {world && (
+            <div className="pointer-events-auto grid w-full grid-cols-5 gap-1 sm:w-auto">
               <Stat
-                label="Mood"
-                value={`${Math.round(st.happiness)}`}
-                tone={st.happiness < 35 ? "bad" : st.happiness > 65 ? "good" : undefined}
+                label={STAGES[world.tribe.stage]}
+                value={`${Math.round(world.tribe.pop)}`}
+                hint="people"
               />
               <Stat
-                label="Budget"
-                value={`$${compact(st.money)}`}
-                tone={st.money < 0 ? "bad" : undefined}
+                label="Food"
+                value={compact(world.tribe.food)}
+                tone={world.tribe.food < world.tribe.pop ? "bad" : undefined}
               />
+              <Stat label="Grazers" value={compact(herb)} tone={herb < 40 ? "bad" : undefined} />
+              <Stat label="Hunters" value={compact(pred)} tone={pred < 3 ? "bad" : undefined} />
               <Stat
-                label="Smog"
-                value={`${Math.round(st.pollution)}`}
-                tone={st.pollution > 60 ? "bad" : undefined}
-              />
-              <Stat
-                label="Nature"
-                value={`${natureScore(city!.grid, st.pollution)}`}
-                tone={natureScore(city!.grid, st.pollution) < 25 ? "bad" : undefined}
-              />
-              <Stat
-                label="Rift"
-                value={`${Math.round(st.rift)}`}
-                tone={st.rift > 40 ? "bad" : undefined}
+                label="Volcano"
+                value={`${Math.round(world.volcano * 100)}%`}
+                tone={world.volcano > 0.75 ? "bad" : undefined}
               />
             </div>
           )}
         </div>
 
         {/* Controls */}
-        <div className="absolute right-2 top-[6.75rem] z-10 flex flex-col gap-1 sm:right-3 sm:top-20 [&_button]:size-8 sm:[&_button]:size-9">
-          <Button
-            size="icon"
-            variant="outline"
-            className="rounded-none border-ink bg-paper/90"
+        <div className="absolute right-2 top-[6.25rem] z-10 flex flex-col gap-1 sm:right-3 sm:top-20 [&_button]:size-8 sm:[&_button]:size-9">
+          <IconButton
+            on={paused}
             onClick={() => setPaused((p) => !p)}
-            aria-label={paused ? "Resume" : "Pause"}
-            title={paused ? "Resume" : "Pause"}
+            label={paused ? "Resume" : "Pause"}
           >
             {paused ? <Play /> : <Pause />}
-          </Button>
-          <Button
-            size="icon"
-            variant="outline"
-            className={cn(
-              "rounded-none border-ink bg-paper/90",
-              fast && "bg-ink text-paper hover:bg-ink/90 hover:text-paper",
-            )}
-            onClick={() => setFast((f) => !f)}
-            aria-label="Fast forward"
-            aria-pressed={fast}
-            title="Fast forward"
-          >
+          </IconButton>
+          <IconButton on={fast} onClick={() => setFast((f) => !f)} label="Fast forward">
             <FastForward />
-          </Button>
-          <Button
-            size="icon"
-            variant="outline"
-            className={cn(
-              "rounded-none border-ink bg-paper/90",
-              labels && "bg-ink text-paper hover:bg-ink/90 hover:text-paper",
-            )}
-            onClick={() => setLabels((l) => !l)}
-            aria-label="Landmark labels"
-            aria-pressed={labels}
-            title="Landmark labels"
-          >
+          </IconButton>
+          <IconButton on={labels} onClick={() => setLabels((l) => !l)} label="Place names">
             <Tag />
-          </Button>
-          <Button
-            size="icon"
-            variant="outline"
-            className={cn(
-              "rounded-none border-ink bg-paper/90",
-              upsideDown && "bg-stamp text-paper hover:bg-stamp/90 hover:text-paper",
-            )}
-            onClick={() => setUpsideDown((u) => !u)}
-            aria-label="Flip to the Upside Down"
-            aria-pressed={upsideDown}
-            title={upsideDown ? "Back to Maple Hollow" : "Flip to the Upside Down"}
-          >
-            <FlipVertical2 />
-          </Button>
-          <Button
-            size="icon"
-            variant="outline"
-            className="rounded-none border-ink bg-paper/90"
-            onClick={share}
-            aria-label="Share town"
-            title="Share town"
-          >
+          </IconButton>
+          <IconButton onClick={share} label="Share island">
             <Share2 />
-          </Button>
-          <Button
-            size="icon"
-            variant="outline"
-            className="rounded-none border-ink bg-paper/90"
-            onClick={() => setConfirmReset(true)}
-            aria-label="New town"
-            title="New town"
-          >
+          </IconButton>
+          <IconButton onClick={() => setConfirmReset(true)} label="New island">
             <RotateCcw />
-          </Button>
+          </IconButton>
         </div>
 
         {shared && (
-          <div className="absolute left-2 right-14 top-[6.75rem] z-10 border-2 border-ink bg-paper/95 p-2 text-sm sm:left-3 sm:right-16 sm:top-20 sm:max-w-sm">
-            You're reading someone else's town. Type an event to take it over, or{" "}
-            <button className="underline" onClick={newCity}>
+          <div className="absolute left-2 right-14 top-[6.25rem] z-10 border-2 border-ink bg-paper/95 p-2 text-sm sm:left-3 sm:right-16 sm:top-20 sm:max-w-sm">
+            You're visiting someone else's island. Use a power to make it yours, or{" "}
+            <button className="underline" onClick={newIsland}>
               start your own
             </button>
             .
           </div>
         )}
 
-        {/* Disaster picker */}
+        {world && inspect !== null && !armed && (
+          <TileCard world={world} tile={inspect} onClose={() => setInspect(null)} />
+        )}
+
+        {/* God powers */}
         <div className="absolute inset-x-0 bottom-0 z-10 p-2 sm:p-4">
-          <DisasterPicker
-            picked={picked}
-            onPick={(preset) =>
-              setPicked((cur) =>
-                cur?.preset.id === preset.id
-                  ? null
-                  : { preset, place: PLACES.find((pl) => pl.id === preset.where) ?? PLACES[0] },
-              )
-            }
-            onPlace={(place) => setPicked((cur) => (cur ? { ...cur, place } : cur))}
-            onFire={() => picked && submit(picked.preset, picked.place)}
-            credits={c.credits}
-            nextIn={nextIn}
-            busy={busy}
-            busyFor={busyFor}
-            holding={holding}
-            ready={!!city}
-          />
+          {world && (
+            <GodPanel
+              group={group}
+              onGroup={setGroup}
+              armed={armed}
+              onArm={(a) => {
+                setArmed(a);
+                setInspect(null);
+              }}
+              onCast={castWhole}
+              favour={world.favour}
+              evo={world.evo}
+              known={world.known}
+              busy={dramatic}
+              focus={world.tribe.focus}
+            />
+          )}
         </div>
       </main>
 
       <aside
         className={cn(
-          "border-t-2 border-ink bg-newsprint lg:max-h-none lg:w-[400px] lg:overflow-y-auto lg:border-l-2 lg:border-t-0",
-          paperOpen && "max-h-[70dvh] overflow-y-auto",
+          "border-t-2 border-ink bg-cave lg:max-h-none lg:w-[380px] lg:overflow-y-auto lg:border-l-2 lg:border-t-0",
+          wallOpen && "max-h-[70dvh] overflow-y-auto",
         )}
       >
-        {/* Phones: a folded paper showing the latest headline. */}
+        {/* Phones: the latest story, folded. */}
         <button
           type="button"
-          onClick={() => setPaperOpen((o) => !o)}
-          aria-expanded={paperOpen}
-          className="sticky top-0 z-10 flex w-full items-center gap-2 border-b border-ink/20 bg-newsprint px-3 py-2 text-left lg:hidden"
+          onClick={() => setWallOpen((o) => !o)}
+          aria-expanded={wallOpen}
+          className="sticky top-0 z-10 flex w-full items-center gap-2 border-b border-ochre/25 bg-cave px-3 py-2 text-left text-[#f1e4c8] lg:hidden"
         >
-          <span className="shrink-0 font-mono text-[9px] font-semibold uppercase tracking-[0.2em] text-stamp">
-            Courier
-          </span>
+          <span className="shrink-0 text-base">{latest?.glyph ?? "🔥"}</span>
           <span className="min-w-0 flex-1 truncate font-serif-d text-sm font-bold">
-            {city?.log[city.log.length - 1]?.result.headline ?? "Nothing to report. Yet."}
+            {telling
+              ? "The storyteller is painting…"
+              : (latest?.title ?? "The cave wall is bare. For now.")}
           </span>
           <ChevronUp
-            className={cn("size-4 shrink-0 transition-transform", paperOpen && "rotate-180")}
+            className={cn("size-4 shrink-0 transition-transform", wallOpen && "rotate-180")}
           />
         </button>
-        <div className={cn(!paperOpen && "hidden", "lg:block")}>
-          {city && <Newspaper city={city} />}
+        <div className={cn(!wallOpen && "hidden", "lg:block lg:h-full")}>
+          {world && <CaveWall world={world} telling={telling > 0} />}
         </div>
       </aside>
 
       <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
         <AlertDialogContent className="rounded-none border-2 border-ink bg-paper">
           <AlertDialogHeader>
-            <AlertDialogTitle className="font-serif-d">Bulldoze and start over?</AlertDialogTitle>
+            <AlertDialogTitle className="font-serif-d">
+              Sink this island and raise a new one?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              {city?.name} and its whole archive will be gone. Share it first if you want to keep a
-              copy.
+              The tribe, the herds and everything on the cave wall will be gone. Share it first if
+              you want to keep a copy.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="rounded-none">Keep it</AlertDialogCancel>
             <AlertDialogAction
               className="rounded-none bg-stamp text-paper hover:bg-stamp/90"
-              onClick={newCity}
+              onClick={newIsland}
             >
-              New town
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <AlertDialog open={collapsed && !dismissedCollapse && !shared}>
-        <AlertDialogContent className="rounded-none border-2 border-ink bg-paper">
-          <AlertDialogHeader>
-            <p className="font-mono text-[10px] uppercase tracking-[0.3em] text-muted-foreground">
-              Obituaries · Day {city?.day}
-            </p>
-            <AlertDialogTitle className="font-serif-d text-2xl">
-              {city?.name}, day 0 – {city?.day}
-            </AlertDialogTitle>
-            <AlertDialogDescription className="text-ink/80">
-              The town is survived by {city ? countKinds(city.grid).rubble : 0} piles of rubble and{" "}
-              {city?.log.length ?? 0} front pages. In lieu of flowers, the family asks that you
-              found another town, or type something that brings this one back.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-none" onClick={() => setDismissedCollapse(true)}>
-              Try to revive it
-            </AlertDialogCancel>
-            <AlertDialogAction className="rounded-none bg-ink text-paper" onClick={newCity}>
-              Found a new town
+              New island
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -742,10 +462,128 @@ function Index() {
   );
 }
 
+/** What's on a tapped spot. */
+function TileCard({
+  world,
+  tile,
+  onClose,
+}: {
+  world: WorldState;
+  tile: number;
+  onClose: () => void;
+}) {
+  const t = world.tiles[tile];
+  const animals = SPECIES.map((sp) => [sp, world.pop[sp][t.region] ?? 0] as const)
+    .filter(([, n]) => n >= 1)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4);
+  return (
+    <div className="absolute bottom-[10.5rem] left-2 z-10 w-60 border-2 border-ink bg-paper/95 p-2.5 text-xs shadow-[3px_3px_0_0_var(--ink)] backdrop-blur-sm sm:bottom-auto sm:left-3 sm:top-24">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
+            {t.biome.replace(/_/g, " ")}
+          </p>
+          <p className="font-serif-d text-sm font-bold leading-tight">
+            {t.landmark ? LANDMARK_NAMES[t.landmark] : REGION_NAMES[t.region]}
+          </p>
+          {t.landmark && <p className="text-[11px] text-ink/60">{REGION_NAMES[t.region]}</p>}
+        </div>
+        <button
+          onClick={onClose}
+          className="font-mono text-[10px] text-ink/50 hover:text-ink"
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
+      <p className="mt-1.5 text-ink/75">
+        {t.fire > 0 ? "Burning. " : ""}
+        {t.lava > 0 ? "Molten lava. " : ""}
+        {t.flood > 0 ? "Under floodwater. " : ""}
+        {t.build ? `The tribe's ${t.build.replace(/_/g, " ")}. ` : ""}
+        Plants {Math.round(t.veg * 100)}% · trees {Math.round(t.forest * 100)}%
+      </p>
+      {animals.length > 0 && (
+        <p className="mt-1 text-ink/75">
+          Here:{" "}
+          {animals
+            .map(([sp, n]) => `${Math.round(n)} ${SPECIES_DEFS[sp].plural.toLowerCase()}`)
+            .join(", ")}
+        </p>
+      )}
+      {world.sanctuaries.includes(t.region) && (
+        <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-moss">Sanctuary</p>
+      )}
+    </div>
+  );
+}
+
+function IconButton({
+  on,
+  onClick,
+  label,
+  children,
+}: {
+  on?: boolean;
+  onClick: () => void;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <Button
+      size="icon"
+      variant="outline"
+      className={cn(
+        "rounded-none border-ink bg-paper/90",
+        on && "bg-ink text-paper hover:bg-ink/90 hover:text-paper",
+      )}
+      onClick={onClick}
+      aria-label={label}
+      aria-pressed={on}
+      title={label}
+    >
+      {children}
+    </Button>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  tone,
+  hint,
+}: {
+  label: string;
+  value: string;
+  tone?: "bad" | "good";
+  hint?: string;
+}) {
+  return (
+    <div
+      className="border-2 border-ink bg-paper/90 px-1.5 py-0.5 text-center backdrop-blur-sm sm:min-w-16 sm:px-2 sm:py-1"
+      title={hint}
+    >
+      <p className="truncate font-mono text-[8px] uppercase tracking-wider text-muted-foreground sm:text-[9px]">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "font-serif-d text-sm font-bold tabular-nums sm:text-base",
+          tone === "bad" && "text-stamp",
+          tone === "good" && "text-moss",
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
 function SceneFallback() {
   return (
-    <div className="flex h-full items-center justify-center bg-sky font-mono text-xs uppercase tracking-widest text-ink/60">
-      Surveying the land…
+    <div className="flex h-full items-center justify-center bg-[#9fc3cf] font-mono text-xs uppercase tracking-widest text-ink/60">
+      Raising the island…
     </div>
   );
 }
