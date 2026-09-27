@@ -6,6 +6,7 @@ import {
   type SimulateInput,
 } from "./schema";
 import type { EventResult } from "./types";
+import { serverEnv } from "../serverEnv.server";
 
 // Override with the CITY_MODEL secret if you want a cheaper/faster model.
 const DEFAULT_MODEL = "claude-opus-5-5";
@@ -76,12 +77,12 @@ export async function runNewsroom(
   input: SimulateInput,
   library: { key: string; name: string }[] = [],
 ): Promise<{ result: EventResult; refused: boolean }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = serverEnv("ANTHROPIC_API_KEY");
   if (!apiKey)
     throw new NewsroomError("The newsroom is closed: ANTHROPIC_API_KEY is not configured.");
 
   // Organization-level keys (not scoped to a workspace) must name the workspace.
-  const workspaceId = process.env.ANTHROPIC_WORKSPACE_ID;
+  const workspaceId = serverEnv("ANTHROPIC_WORKSPACE_ID");
   const client = new Anthropic({
     apiKey,
     maxRetries: 1,
@@ -105,7 +106,7 @@ The visitor typed this event:
 <event>${event}</event>`;
 
   const base = {
-    model: process.env.CITY_MODEL || DEFAULT_MODEL,
+    model: serverEnv("CITY_MODEL") || DEFAULT_MODEL,
     max_tokens: 8000,
     system: SYSTEM_PROMPT,
     messages: [{ role: "user" as const, content: userMessage }],

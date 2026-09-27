@@ -15,6 +15,7 @@
  */
 import { recipe as recipeSchema } from "./schema";
 import type { Actor, Recipe } from "./types";
+import { serverEnv } from "../serverEnv.server";
 
 const TABLE = "actor_library";
 
@@ -28,13 +29,13 @@ interface Row {
 }
 
 function supabase() {
-  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = serverEnv("SUPABASE_URL")?.replace(/\/+$/, "");
+  const service = serverEnv("SUPABASE_SERVICE_ROLE_KEY");
   return url && service ? { url, service } : null;
 }
 type Sb = NonNullable<ReturnType<typeof supabase>>;
 
-const perVisitorCap = () => Number(process.env.LIBRARY_PER_VISITOR_CAP) || 10;
+const perVisitorCap = () => Number(serverEnv("LIBRARY_PER_VISITOR_CAP")) || 10;
 
 // ---------------------------------------------------------------------------
 // Supabase (PostgREST over plain fetch)
