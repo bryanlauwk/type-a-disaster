@@ -199,6 +199,8 @@ export function groundMaterial(tex: GroundTextures): THREE.MeshStandardMaterial 
         `#include <common>
 attribute vec4 splatA;
 attribute vec4 splatB;
+attribute vec2 wet;
+varying vec2 vWet;
 varying vec4 vSplatA;
 varying vec4 vSplatB;
 varying vec3 vGroundPos;
@@ -209,6 +211,7 @@ varying vec3 vGroundNormal;`,
         `#include <worldpos_vertex>
 vSplatA = splatA;
 vSplatB = splatB;
+vWet = wet;
 vGroundPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
 vGroundNormal = normalize(mat3(modelMatrix) * objectNormal);`,
       );
@@ -224,8 +227,10 @@ uniform float uDry;
 uniform float uCloud;
 varying vec4 vSplatA;
 varying vec4 vSplatB;
+varying vec2 vWet;
 varying vec3 vGroundPos;
 varying vec3 vGroundNormal;
+float waterMask;
 float gh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float gn(vec2 p) {
   vec2 i = floor(p); vec2 f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
@@ -276,10 +281,25 @@ void groundShade() {
   // Cloud shadows drifting across the island.
   float cloud = smoothstep(0.52, 0.72, gn(vGroundPos.xz * 0.018 + vec2(uTime * 0.012, uTime * 0.006)) * 0.7 + gn(vGroundPos.xz * 0.05 + uTime * 0.02) * 0.3);
   alb *= 1.0 - cloud * 0.28 * uCloud;
-  groundAlbedo = alb;
   vec3 n = normalize(vGroundNormal);
   // Tangent frame on the ground: +x along u, +z along v.
   groundNormalW = normalize(n + vec3(nrm.x, 0.0, nrm.y) * 0.9 * (1.0 - abs(n.y) * 0.1));
+  // Rivers and lakes: a smooth-edged, glassy, rippling surface in the channel.
+  float edgeNoise = (gn(vGroundPos.xz * 3.0) - 0.5) * 0.12;
+  waterMask = smoothstep(0.42, 0.58, vWet.x + vWet.y + edgeNoise);
+  if (waterMask > 0.0) {
+    vec2 q = vGroundPos.xz;
+    float a1 = gn(q * 2.4 + vec2(uTime * 0.35, uTime * 0.6));
+    float a2 = gn(q * 5.5 - vec2(uTime * 0.5, -uTime * 0.3));
+    vec3 wn = normalize(vec3((a1 - 0.5) * 0.35 + (a2 - 0.5) * 0.2, 1.0, (a2 - 0.5) * 0.35 - (a1 - 0.5) * 0.15));
+    vec3 deep = mix(vec3(0.03, 0.09, 0.1), vec3(0.18, 0.5, 0.48), clamp(vWet.y, 0.0, 1.0));
+    float shore = smoothstep(0.0, 0.25, waterMask) * (1.0 - smoothstep(0.25, 0.6, waterMask));
+    alb = mix(alb, deep, waterMask * 0.92);
+    alb = mix(alb, vec3(0.75, 0.78, 0.74), shore * 0.25);
+    groundNormalW = normalize(mix(groundNormalW, wn, waterMask));
+    groundRough = mix(groundRough, 0.06, waterMask);
+  }
+  groundAlbedo = alb;
 }`,
       )
       .replace(
@@ -292,6 +312,11 @@ diffuseColor.rgb *= groundAlbedo * 2.2;`,
         "#include <roughnessmap_fragment>",
         `#include <roughnessmap_fragment>
 roughnessFactor = groundRough;`,
+      )
+      .replace(
+        "#include <metalnessmap_fragment>",
+        `#include <metalnessmap_fragment>
+metalnessFactor = waterMask * 0.15;`,
       )
       .replace(
         "#include <normal_fragment_maps>",

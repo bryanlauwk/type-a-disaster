@@ -183,7 +183,7 @@ void main() {
   float rise = smoothstep(0.0, 0.7, since);
   float drain = 1.0 - smoothstep(uDrainAt, uDrainAt + uDrainFor, uT);
   vLevel = rise * drain;
-  vFresh = 1.0 - smoothstep(0.0, 2.6, since);
+  vFresh = 1.0 - smoothstep(0.0, 1.3, since);
   vEdge = aEdge;
   vec3 p = position;
   // A rolling bore of white water at the leading edge.
@@ -222,8 +222,11 @@ void main() {
   vec3 view = normalize(cameraPosition - vWorld);
   float fres = pow(1.0 - max(dot(n, view), 0.0), 4.0);
   // Churned up with sand and mud.
-  vec3 col = mix(vec3(0.6, 0.55, 0.45), vec3(0.42, 0.52, 0.5), 0.45 + 0.3 * vn(vWorld.xz * 0.3 + uT * 0.2));
-  col = mix(col, vec3(0.82, 0.86, 0.9), fres * 0.7);
+  // Silt-laden water: brown and khaki swirls, with the sky caught in it.
+  float swirl = vn(vWorld.xz * 0.25 - flow * 0.2) * 0.6 + vn(vWorld.xz * 0.9 - flow * 0.6) * 0.4;
+  vec3 col = mix(vec3(0.3, 0.25, 0.17), vec3(0.46, 0.42, 0.3), swirl);
+  col = mix(col, vec3(0.26, 0.33, 0.3), smoothstep(0.55, 0.9, swirl) * 0.5);
+  col = mix(col, vec3(0.72, 0.8, 0.86), clamp(fres * 1.4 + 0.08, 0.0, 0.6));
   // White water at the leading edge, marbled foam behind it.
   float churn = vn(vWorld.xz * 1.6 - flow * 2.0) * 0.6 + vn(vWorld.xz * 4.5 - flow * 3.0) * 0.4;
   // Foam streaks drawn out along the flow.

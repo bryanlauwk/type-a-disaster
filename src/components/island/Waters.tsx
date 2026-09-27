@@ -311,10 +311,12 @@ void main() {
   vec3 h = normalize(uSun + view);
   float spec = pow(max(dot(n, h), 0.0), 220.0) * 6.0;
   float foam = smoothstep(0.7, 0.9, vnoise(q * 3.0 - vec2(0.0, uTime * 1.5 * vFlow)) * r1.z) * vFlow;
-  vec3 col = mix(vColor, uSky, fres * 0.8);
+  // Floodwater (flow ~0.4) is murky and lets the ground show through.
+  float flood = step(0.3, vFlow) * step(vFlow, 0.5);
+  vec3 col = mix(vColor, uSky, fres * mix(0.8, 0.35, flood));
   col = mix(col, vec3(0.92), foam * 0.5);
-  col = col * uLight + spec * uLight;
-  gl_FragColor = vec4(col, mix(0.78, 0.95, fres));
+  col = col * uLight + spec * uLight * mix(1.0, 0.4, flood);
+  gl_FragColor = vec4(col, mix(mix(0.78, 0.95, fres), 0.62, flood));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -331,7 +333,9 @@ function surface(t: Tile): number {
   return t.h + 0.08;
 }
 
-const wet = (t: Tile) => t.water === RIVER || t.water === LAKE || (t.flood > 0 && t.water !== SEA);
+// Rivers and lakes are drawn by the ground itself (smooth banks); this mesh is
+// for water that spills over it: floods.
+const wet = (t: Tile) => t.flood > 0 && t.water !== SEA && t.water !== RIVER && t.water !== LAKE;
 
 /**
  * Rivers, lakes, ponds and floodwater: one mesh with a quad per wet tile,

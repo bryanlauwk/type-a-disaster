@@ -59,6 +59,8 @@ export function Terrain({
     g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(N * N * 3), 3));
     g.setAttribute("splatA", new THREE.BufferAttribute(new Float32Array(N * N * 4), 4));
     g.setAttribute("splatB", new THREE.BufferAttribute(new Float32Array(N * N * 4), 4));
+    // Rivers, lakes and the lagoon are painted into the ground itself (x: wet, y: lagoon).
+    g.setAttribute("wet", new THREE.BufferAttribute(new Float32Array(N * N * 2), 2));
     return g;
   }, []);
   // The photographed ground, once its textures arrive (painted colours until then).
@@ -108,6 +110,7 @@ export function Terrain({
       }
     }
     const sa = geometry.attributes.splatA as THREE.BufferAttribute;
+    const wetA = geometry.attributes.wet as THREE.BufferAttribute;
     const sb = geometry.attributes.splatB as THREE.BufferAttribute;
     const pos = geometry.attributes.position as THREE.BufferAttribute;
     const col = geometry.attributes.color as THREE.BufferAttribute;
@@ -143,6 +146,8 @@ export function Terrain({
       let gg = 0;
       let b = 0;
       const blend = new Float32Array(8);
+      let wetness = 0;
+      let lagoon = 0;
       for (const [dx, dz, w] of [
         [0, 0, (1 - u) * (1 - v)],
         [1, 0, u * (1 - v)],
@@ -154,15 +159,20 @@ export function Terrain({
         gg += colors[i * 3 + 1] * w;
         b += colors[i * 3 + 2] * w;
         for (let l = 0; l < 8; l++) blend[l] += splats[i * 8 + l] * w;
+        const tt = tiles[i];
+        if (tt.water === RIVER || tt.water === LAKE) wetness += w;
+        if (tt.biome === "lagoon") lagoon += w;
       }
       col.setXYZ(k, r, gg, b);
       sa.setXYZW(k, blend[0], blend[1], blend[2], blend[3]);
       sb.setXYZW(k, blend[4], blend[5], blend[6], blend[7]);
+      wetA.setXY(k, wetness, lagoon);
     }
     pos.needsUpdate = true;
     col.needsUpdate = true;
     sa.needsUpdate = true;
     sb.needsUpdate = true;
+    wetA.needsUpdate = true;
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
   }, [tiles, geometry, photo]);
