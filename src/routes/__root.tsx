@@ -72,11 +72,11 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Type-a-Disaster" },
+      { title: "Primordia" },
       {
         name: "description",
         content:
-          "A sleepy 1985 small town with something underneath. Type an event; the local paper reports the fallout.",
+          "A Jurassic island god-game: shape the land, guide the dinosaurs' ecosystem and a young human tribe, and let the storyteller paint it on the cave wall.",
       },
       { name: "author", content: "Lovable" },
       { property: "og:title", content: "Type-a-Disaster" },
@@ -90,6 +90,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "twitter:site", content: "@Lovable" },
     ],
     links: [
+      {
+        rel: "icon",
+        href: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌋</text></svg>",
+      },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {

@@ -65,17 +65,23 @@
   --color-stamp: var(--stamp);
   --color-leaf: var(--leaf);
   --color-sky: var(--sky);
+  --color-cave: var(--cave);
+  --color-ochre: var(--ochre);
+  --color-moss: var(--moss);
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 }
 
 :root {
   --radius: 0.25rem;
-  /* Small-town newsprint: warm paper, black ink, a red rubber stamp */
-  --ink: oklch(0.2 0.01 60);
-  --paper: oklch(0.97 0.012 90);
-  --newsprint: oklch(0.945 0.014 88);
-  --stamp: oklch(0.52 0.19 28);
-  --leaf: oklch(0.5 0.12 150);
+  /* Primordia: sun-bleached bone, charcoal, red ochre, and the cave wall */
+  --ink: oklch(0.22 0.02 55);
+  --paper: oklch(0.955 0.022 82);
+  --newsprint: oklch(0.925 0.03 78);
+  --stamp: oklch(0.55 0.16 38);
+  --leaf: oklch(0.52 0.12 140);
+  --cave: oklch(0.25 0.02 50);
+  --ochre: oklch(0.74 0.13 68);
+  --moss: oklch(0.46 0.09 135);
   --sky: oklch(0.9 0.03 225);
   --background: var(--paper);
   --foreground: var(--ink);

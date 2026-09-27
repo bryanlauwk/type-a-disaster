@@ -1,11 +1,5 @@
 ANTHROPIC_API_KEY="sk-ant-..."
 # Only for organization-level keys that aren't scoped to a workspace:
 # ANTHROPIC_WORKSPACE_ID="wrkspc_..."
-# Optional: override the model used for events (default claude-opus-5)
+# Optional: override the model the storyteller uses (default claude-opus-5-5)
 # CITY_MODEL="claude-sonnet-5"
-
-# Optional: keep Claude's custom-actor recipes in a shared Supabase library.
-# (Ready-made models need no configuration: they come from a free index.)
-# SUPABASE_URL="https://your-project.supabase.co"
-# SUPABASE_SERVICE_ROLE_KEY="..."
-# LIBRARY_PER_VISITOR_CAP="10"
