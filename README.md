@@ -56,7 +56,19 @@ Run `npm run test` (uses Bun) for the simulation tests.
 
 ## Credits
 
-Everything on the island is generated in code. The sky is Poly Haven's [Kloofendal 48d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) by Greg Zaal and Jarod Guest (CC0). Primordia, its tribe and its animals are fictional.
+The dinosaurs are real 3D models, all CC BY 4.0 via Sketchfab (from the Objaverse mirror), recoloured and with their animations baked for the island (`public/dinos`, `src/components/island/dinoSkins.ts`):
+
+- Titans: "Braquiossauro 3 Topologia" by pro_alba
+- Hornfaces: "Triceratops - dinosaur - low poly" by Legendary Claws
+- Duckbills: "Parasaurolofo ark" by Dodogamer
+- Platebacks: "Ankylosaurus" by rushanwasim
+- Snappers: "Compsognathus" by Dodogamer
+- Tyrants: "Tyrannosaurus Rex With Fixed Colour" by dinomaster
+- Raptors: "Velociraptor With Fixed Colour" by dinomaster
+- Skywings: "Pteranodon (with Fixed Colour)" by dinomaster
+- Leviathans: "mosasaurus" by Epic_devolepment
+
+Everything else on the island is generated in code. The sky is Poly Haven's [Kloofendal 48d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) by Greg Zaal and Jarod Guest (CC0). Primordia, its tribe and its animals are fictional.
 
 ## Build with Lovable
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { hash } from "@/lib/island/rng";
@@ -17,6 +17,7 @@ import {
 } from "@/lib/island/types";
 import { MODELS, type Anim, type Geo, type Part, type Role } from "./dinoModels";
 import { heightAt, tileAtWorld } from "./palette";
+import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -65,6 +66,20 @@ export interface Agent {
   path?: { x: number; z: number }[];
   pathAt?: number;
   runSpeed?: number;
+  /** What the real model is playing, and the clip it's fading out of. */
+  clip: ClipName;
+  clipT: number;
+  prevClip: ClipName;
+  prevT: number;
+  fade: number;
+  /** A one-off action (a roar, a lunge) that plays over the current state. */
+  act?: ClipName;
+  actFor: number;
+  /** The idle a standing animal is doing: resting, looking round, sniffing. */
+  idleAs: ClipName;
+  /** A youngster keeps close to an adult of its kind. */
+  mum: Agent | null;
+  young: boolean;
 }
 
 /** Shared with the rest of the scene: where the dangerous animals are right now. */
@@ -88,6 +103,8 @@ const SHOW: Record<SpeciesId, number> = {
   leviathan: 1,
 };
 const MAX_AGENTS = 230;
+/** Most animals of one species drawn at once with a real model. */
+const SKIN_CAP = 160;
 const WALK: Record<SpeciesId, number> = {
   titan: 0.9,
   hornface: 0.8,
@@ -100,6 +117,44 @@ const WALK: Record<SpeciesId, number> = {
   leviathan: 0.8,
 };
 const RUN = 2.6;
+
+/** Body length on screen at the species' standard size (world units). */
+const LENGTH: Record<SpeciesId, number> = {
+  titan: 4,
+  hornface: 1.7,
+  duckbill: 1.8,
+  plateback: 1.4,
+  snapper: 0.32,
+  tyrant: 2.4,
+  raptor: 0.8,
+  skywing: 0.36,
+  leviathan: 5,
+};
+/** Body lengths covered per cycle of each moving clip, so feet don't skate. */
+const TRAVEL: Partial<Record<ClipName, number>> = { walk: 0.55, run: 1.2, creep: 0.3 };
+const FALLBACK: Partial<Record<ClipName, ClipName[]>> = {
+  graze: ["idle"],
+  rest: ["idle"],
+  eat: ["graze", "idle"],
+  run: ["walk"],
+  creep: ["walk"],
+  roar: ["idle"],
+  look: ["idle"],
+  sniff: ["idle"],
+  attack: ["eat", "idle"],
+  tail: ["roar", "idle"],
+  fly: ["glide", "walk"],
+  glide: ["fly"],
+  swim: ["walk", "idle"],
+  walk: ["idle"],
+};
+/** Idle variations each species picks from when it stands about. */
+const IDLES: Partial<Record<SpeciesId, ClipName[]>> = {
+  tyrant: ["idle", "idle", "sniff", "roar"],
+  raptor: ["idle", "look", "look"],
+  hornface: ["idle", "idle", "rest"],
+  plateback: ["idle"],
+};
 
 const GEOS: Geo[] = ["sphere", "capsule", "cone", "box", "cyl"];
 function unitGeometry(g: Geo): THREE.BufferGeometry {
@@ -168,6 +223,48 @@ const p = new THREE.Vector3();
 const s = new THREE.Vector3();
 const c = new THREE.Color();
 const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
+const v3 = new THREE.Vector3();
+
+/** Moves an animal's clips along: picks the right one, crossfades, keeps feet planted. */
+function animate(a: Agent, skin: Skin, gait: string, t: number, dt: number) {
+  if (a.actFor > 0) {
+    a.actFor -= dt;
+    if (a.actFor <= 0) {
+      a.actFor = 0;
+      a.act = undefined;
+    }
+  }
+  // Now and then a standing animal changes what it's doing: looks round, sniffs the air.
+  const idles = IDLES[a.sp];
+  if (idles && a.clip === a.idleAs && a.clipT > (skin.meta.clips[a.clip]?.dur ?? 3) * 2) {
+    const next = idles[Math.floor(hash(a.id, Math.floor(t / 4)) * idles.length)];
+    a.idleAs = next === "roar" && hash(a.id, Math.floor(t / 9), 5) > 0.3 ? "idle" : next;
+  }
+  const want = resolve(skin, wantClip(a, gait, t));
+  if (want !== a.clip) {
+    a.prevClip = a.clip;
+    a.prevT = a.clipT;
+    a.fade = 1;
+    a.clip = want;
+    a.clipT = want === "roar" || want === "attack" || want === "tail" ? 0 : hash(a.id, 13) * 2;
+  }
+  const meta = skin.meta.clips[a.clip]!;
+  let rate = 1;
+  const travel = TRAVEL[a.clip];
+  if (a.state === "dead") rate = 0;
+  else if (travel) {
+    const len = (a.scale / SPECIES_DEFS[a.sp].size) * LENGTH[a.sp];
+    // Cycles per second that match the ground speed, kept within sensible bounds.
+    const natural = 1 / meta.dur;
+    const cycles = a.speed / (travel * len);
+    rate = Math.min(2.2, Math.max(0.45, cycles / natural));
+  }
+  a.clipT += dt * rate;
+  if (a.fade > 0) {
+    a.prevT += dt;
+    a.fade = Math.max(0, a.fade - dt / 0.3);
+  }
+}
 
 /** The animation pose for a part's joint. */
 function jointRotation(a: Anim, ag: Agent, t: number, gait: string): THREE.Matrix4 {
@@ -261,7 +358,46 @@ function spawn(world: WorldState, sp: SpeciesId, region: RegionId, herd = 0, at?
     deadFor: 0,
     prey: null,
     nextThink: 0,
+    clip: "idle",
+    clipT: hash(id, 11) * 5,
+    prevClip: "idle",
+    prevT: 0,
+    fade: 0,
+    actFor: 0,
+    idleAs: "idle",
+    mum: null,
+    young,
   };
+}
+
+function has(skin: Skin | undefined, c: ClipName): boolean {
+  return !!skin?.meta.clips[c];
+}
+
+/** The nearest clip a model actually has. */
+function resolve(skin: Skin, c: ClipName): ClipName {
+  if (has(skin, c)) return c;
+  for (const f of FALLBACK[c] ?? []) if (has(skin, f)) return resolve(skin, f);
+  return (Object.keys(skin.meta.clips)[0] as ClipName) ?? "idle";
+}
+
+/** What an animal's body should be doing, given what it's up to. */
+function wantClip(a: Agent, gait: string, t: number): ClipName {
+  if (a.act && a.actFor > 0) return a.act;
+  if (a.state === "dead") return "idle";
+  if (gait === "swim") return "swim";
+  if (gait === "fly") return Math.sin(t * 0.35 + a.id * 1.7) > 0.1 ? "glide" : "fly";
+  if (a.path || a.state === "flee") return "run";
+  if (a.state === "hunt") {
+    const pr = a.prey;
+    if (a.sp === "raptor" && pr && Math.hypot(pr.x - a.x, pr.z - a.z) > 3) return "creep";
+    return "run";
+  }
+  if (a.state === "eat") return SPECIES_DEFS[a.sp].diet === "plants" ? "graze" : "eat";
+  if (a.state === "graze" || a.state === "drink") return "graze";
+  if (a.state === "nest") return "rest";
+  if (a.speed > 0.08) return a.speed > WALK[a.sp] * 1.7 ? "run" : "walk";
+  return a.idleAs;
 }
 
 export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => number }) {
@@ -345,6 +481,58 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
     void geo;
   }, [world]);
   const prevHerds = useRef(new Map<number, Herd>());
+
+  // The real models, as they arrive; until then a species keeps its sketch.
+  const [skins, setSkins] = useState<Partial<Record<SpeciesId, Skin>>>({});
+  const skinsRef = useRef(skins);
+  skinsRef.current = skins;
+  useEffect(() => {
+    let live = true;
+    for (const sp of SPECIES)
+      loadSkin(sp)
+        .then((skin) => live && setSkins((cur) => ({ ...cur, [sp]: skin })))
+        .catch((err) => console.warn(`Keeping the sketched ${sp}:`, err));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const skinMeshes = useRef<Partial<Record<SpeciesId, THREE.InstancedMesh | null>>>({});
+  const skinAttrs = useMemo(() => {
+    const out = {} as Record<
+      SpeciesId,
+      {
+        a: THREE.InstancedBufferAttribute;
+        b: THREE.InstancedBufferAttribute;
+        f: THREE.InstancedBufferAttribute;
+      }
+    >;
+    for (const sp of SPECIES)
+      out[sp] = {
+        a: new THREE.InstancedBufferAttribute(new Float32Array(SKIN_CAP * 3), 3).setUsage(
+          THREE.DynamicDrawUsage,
+        ),
+        b: new THREE.InstancedBufferAttribute(new Float32Array(SKIN_CAP * 3), 3).setUsage(
+          THREE.DynamicDrawUsage,
+        ),
+        f: new THREE.InstancedBufferAttribute(new Float32Array(SKIN_CAP), 1).setUsage(
+          THREE.DynamicDrawUsage,
+        ),
+      };
+    return out;
+  }, []);
+  // Each species' mesh gets its own per-animal animation attributes.
+  const skinGeoCache = useRef<Partial<Record<SpeciesId, THREE.BufferGeometry>>>({});
+  const skinGeo = (sp: SpeciesId, skin: Skin) => {
+    let g = skinGeoCache.current[sp];
+    if (!g) {
+      g = skin.geometry.clone();
+      g.setAttribute("aAnimA", skinAttrs[sp].a);
+      g.setAttribute("aAnimB", skinAttrs[sp].b);
+      g.setAttribute("aFade", skinAttrs[sp].f);
+      skinGeoCache.current[sp] = g;
+    }
+    return g;
+  };
 
   const prepared = PREPARED;
   const geos = useMemo(
@@ -501,16 +689,66 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
             }
           }
         } else {
-          // Grazers watch for hunters.
+          // Grazers watch for hunters. Most run; the armoured ones turn and
+          // face them: a clubtail swings its tail, a hornface lowers its
+          // horns and bellows, and the youngsters bolt.
           for (const o of lifeBus.hunters) {
             const d = Math.hypot(o.x - a.x, o.z - a.z);
             if (d < 3 + a.scale) {
-              a.state = "flee";
-              a.timer = 3;
-              const away = Math.atan2(a.z - o.z, a.x - o.x);
-              a.tx = a.x + Math.cos(away) * 6;
-              a.tz = a.z + Math.sin(away) * 6;
+              const stand =
+                !a.young && (a.sp === "plateback" || (a.sp === "hornface" && hash(a.id, 21) < 0.5));
+              if (stand) {
+                a.state = "idle";
+                a.timer = 2;
+                a.tx = a.x;
+                a.tz = a.z;
+                a.yaw =
+                  Math.atan2(o.x - a.x, o.z - a.z) + (a.sp === "plateback" ? Math.PI * 0.8 : 0);
+                if (!a.actFor) {
+                  a.act = a.sp === "plateback" ? "tail" : "roar";
+                  a.actFor = 2.2;
+                }
+              } else {
+                a.state = "flee";
+                a.timer = 3;
+                const away = Math.atan2(a.z - o.z, a.x - o.x);
+                a.tx = a.x + Math.cos(away) * 6;
+                a.tz = a.z + Math.sin(away) * 6;
+              }
               break;
+            }
+          }
+          // Youngsters keep close to an adult of their kind.
+          if (a.young && a.state !== "flee") {
+            if (!a.mum || a.mum.state === "dead" || a.mum.region !== a.region) {
+              a.mum = null;
+              let bestD = 6;
+              for (const o of list)
+                if (
+                  o.sp === a.sp &&
+                  !o.young &&
+                  o.state !== "dead" &&
+                  !o.herd &&
+                  o.region === a.region
+                ) {
+                  const d = Math.hypot(o.x - a.x, o.z - a.z);
+                  if (d < bestD) [a.mum, bestD] = [o, d];
+                }
+            }
+            const m = a.mum;
+            if (m) {
+              const len = LENGTH[a.sp];
+              const side = hash(a.id, 22) < 0.5 ? -1 : 1;
+              const fx = m.x - Math.sin(m.yaw) * len * 0.3 + Math.cos(m.yaw) * side * len * 0.35;
+              const fz = m.z - Math.cos(m.yaw) * len * 0.3 - Math.sin(m.yaw) * side * len * 0.35;
+              if (Math.hypot(fx - a.x, fz - a.z) > len * 0.25) {
+                a.tx = fx;
+                a.tz = fz;
+                a.state = "walk";
+              } else if (a.state === "walk") {
+                a.state = m.state === "graze" ? "graze" : "idle";
+                a.timer = 1;
+              }
             }
           }
         }
@@ -531,6 +769,8 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
             a.state = "eat";
             a.timer = 7;
             a.prey = null;
+            a.act = "attack";
+            a.actFor = 1;
           }
         }
       }
@@ -611,7 +851,8 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
           const aim = Math.atan2(dx, dz);
           let d = aim - a.yaw;
           d = Math.atan2(Math.sin(d), Math.cos(d));
-          a.yaw += d * Math.min(1, dt * 4);
+          // Big animals turn slowly.
+          a.yaw += d * Math.min(1, dt * (5 / (1 + LENGTH[a.sp] * 0.45)));
         }
       } else if (a.state === "walk" && !a.herd && model.gait !== "fly" && model.gait !== "swim") {
         a.state = SPECIES_DEFS[a.sp].diet === "plants" ? "graze" : "idle";
@@ -630,10 +871,40 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
 
     // --- Drawing ---------------------------------------------------------------
     const counts: Record<string, number> = {};
+    const skinned = skinsRef.current;
+    const skinCount: Partial<Record<SpeciesId, number>> = {};
     for (const a of list) {
       const model = MODELS[a.sp];
       const dead = a.state === "dead";
       if (dead && a.deadFor > 16) continue;
+      const skin = skinned[a.sp];
+      const mesh = skin && skinMeshes.current[a.sp];
+      if (skin && mesh) {
+        const n = skinCount[a.sp] ?? 0;
+        if (n >= SKIN_CAP) continue;
+        skinCount[a.sp] = n + 1;
+        animate(a, skin, model.gait, t, dt);
+        const len = (a.scale / SPECIES_DEFS[a.sp].size) * LENGTH[a.sp];
+        // The dead topple onto their side and, after a while, sink away.
+        e.set(0, a.yaw, dead ? Math.PI / 2 : 0);
+        q.setFromEuler(e);
+        const sink = dead ? Math.max(0, a.deadFor - 10) * 0.05 * len : 0;
+        p.set(a.x, a.y + (dead ? skin.meta.width * 0.5 * len : 0) - sink, a.z);
+        s.setScalar(len);
+        out.compose(p, q, s);
+        mesh.setMatrixAt(n, out);
+        c.setScalar(a.shade);
+        mesh.setColorAt(n, c);
+        const at = skinAttrs[a.sp];
+        const clipA = skin.meta.clips[a.clip]!;
+        clipRows(clipA, a.clipT, v3);
+        at.a.setXYZ(n, v3.x, v3.y, v3.z);
+        const clipB = skin.meta.clips[a.prevClip] ?? clipA;
+        clipRows(clipB, a.prevT, v3);
+        at.b.setXYZ(n, v3.x, v3.y, v3.z);
+        at.f.setX(n, a.fade);
+        continue;
+      }
       e.set(0, a.yaw, dead ? Math.PI / 2 : 0);
       q.setFromEuler(e);
       const sink = dead ? Math.max(0, a.deadFor - 10) * 0.05 : 0;
@@ -672,11 +943,47 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
+    for (const sp of SPECIES) {
+      const mesh = skinMeshes.current[sp];
+      if (!mesh) continue;
+      const n = skinCount[sp] ?? 0;
+      mesh.count = n;
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+      const at = skinAttrs[sp];
+      for (const attr of [at.a, at.b, at.f]) {
+        attr.clearUpdateRanges();
+        attr.addUpdateRange(0, n * attr.itemSize);
+        attr.needsUpdate = true;
+      }
+    }
   });
 
   return (
     <group>
-      {SPECIES.flatMap((sp) =>
+      {SPECIES.map((sp) => {
+        const skin = skins[sp];
+        if (!skin) return null;
+        const g = skinGeo(sp, skin);
+        return (
+          <instancedMesh
+            key={`skin-${sp}`}
+            ref={(r) => {
+              skinMeshes.current[sp] = r;
+              if (r) {
+                r.setColorAt(0, c.set("#ffffff"));
+                r.count = 0;
+                r.customDepthMaterial = skin.depth;
+              }
+            }}
+            args={[g, skin.materials, SKIN_CAP]}
+            castShadow
+            receiveShadow
+            frustumCulled={false}
+          />
+        );
+      })}
+      {SPECIES.filter((sp) => !skins[sp]).flatMap((sp) =>
         GEOS.filter((g) => PREPARED[sp][g].length).map((g) => {
           const key = `${sp}-${g}`;
           return (

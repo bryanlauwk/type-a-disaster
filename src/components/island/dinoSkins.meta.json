@@ -1,0 +1,284 @@
+{
+  "titan": {
+    "bones": 54,
+    "rows": 256,
+    "clips": {
+      "walk": {
+        "row": 0,
+        "frames": 74,
+        "dur": 4.958
+      },
+      "idle": {
+        "row": 74,
+        "frames": 62,
+        "dur": 4.125
+      },
+      "graze": {
+        "row": 136,
+        "frames": 120,
+        "dur": 28.5
+      }
+    },
+    "height": 0.639,
+    "width": 0.269
+  },
+  "hornface": {
+    "bones": 65,
+    "rows": 100,
+    "clips": {
+      "walk": {
+        "row": 0,
+        "frames": 18,
+        "dur": 1.208
+      },
+      "run": {
+        "row": 18,
+        "frames": 10,
+        "dur": 0.671
+      },
+      "idle": {
+        "row": 28,
+        "frames": 18,
+        "dur": 1.208
+      },
+      "graze": {
+        "row": 46,
+        "frames": 18,
+        "dur": 1.208
+      },
+      "rest": {
+        "row": 64,
+        "frames": 18,
+        "dur": 1.208
+      },
+      "roar": {
+        "row": 82,
+        "frames": 18,
+        "dur": 1.208
+      }
+    },
+    "height": 0.435,
+    "width": 0.335
+  },
+  "duckbill": {
+    "bones": 112,
+    "rows": 123,
+    "clips": {
+      "idle": {
+        "row": 0,
+        "frames": 45,
+        "dur": 3
+      },
+      "walk": {
+        "row": 45,
+        "frames": 21,
+        "dur": 1.4
+      },
+      "run": {
+        "row": 66,
+        "frames": 12,
+        "dur": 0.8
+      },
+      "graze": {
+        "row": 78,
+        "frames": 45,
+        "dur": 3
+      }
+    },
+    "height": 0.489,
+    "width": 0.2
+  },
+  "plateback": {
+    "bones": 58,
+    "rows": 207,
+    "clips": {
+      "walk": {
+        "row": 0,
+        "frames": 25,
+        "dur": 1.667
+      },
+      "run": {
+        "row": 25,
+        "frames": 19,
+        "dur": 1.25
+      },
+      "idle": {
+        "row": 44,
+        "frames": 38,
+        "dur": 2.5
+      },
+      "roar": {
+        "row": 82,
+        "frames": 90,
+        "dur": 6.625
+      },
+      "tail": {
+        "row": 172,
+        "frames": 35,
+        "dur": 2.333
+      }
+    },
+    "height": 0.332,
+    "width": 0.343
+  },
+  "snapper": {
+    "bones": 143,
+    "rows": 92,
+    "clips": {
+      "idle": {
+        "row": 0,
+        "frames": 45,
+        "dur": 3
+      },
+      "walk": {
+        "row": 45,
+        "frames": 11,
+        "dur": 0.7
+      },
+      "run": {
+        "row": 56,
+        "frames": 6,
+        "dur": 0.42
+      },
+      "graze": {
+        "row": 62,
+        "frames": 30,
+        "dur": 2
+      }
+    },
+    "height": 0.393,
+    "width": 0.103
+  },
+  "tyrant": {
+    "bones": 83,
+    "rows": 298,
+    "clips": {
+      "walk": {
+        "row": 0,
+        "frames": 25,
+        "dur": 1.667
+      },
+      "run": {
+        "row": 25,
+        "frames": 10,
+        "dur": 0.667
+      },
+      "idle": {
+        "row": 35,
+        "frames": 60,
+        "dur": 4
+      },
+      "sniff": {
+        "row": 95,
+        "frames": 60,
+        "dur": 4
+      },
+      "eat": {
+        "row": 155,
+        "frames": 90,
+        "dur": 9.125
+      },
+      "roar": {
+        "row": 245,
+        "frames": 30,
+        "dur": 2
+      },
+      "attack": {
+        "row": 275,
+        "frames": 23,
+        "dur": 1.5
+      }
+    },
+    "height": 0.344,
+    "width": 0.186
+  },
+  "raptor": {
+    "bones": 84,
+    "rows": 243,
+    "clips": {
+      "walk": {
+        "row": 0,
+        "frames": 17,
+        "dur": 1.167
+      },
+      "run": {
+        "row": 17,
+        "frames": 18,
+        "dur": 1.208
+      },
+      "idle": {
+        "row": 35,
+        "frames": 69,
+        "dur": 4.583
+      },
+      "look": {
+        "row": 104,
+        "frames": 69,
+        "dur": 4.583
+      },
+      "eat": {
+        "row": 173,
+        "frames": 29,
+        "dur": 1.958
+      },
+      "attack": {
+        "row": 202,
+        "frames": 15,
+        "dur": 1
+      },
+      "creep": {
+        "row": 217,
+        "frames": 26,
+        "dur": 1.708
+      }
+    },
+    "height": 0.431,
+    "width": 0.182
+  },
+  "skywing": {
+    "bones": 46,
+    "rows": 179,
+    "clips": {
+      "fly": {
+        "row": 0,
+        "frames": 18,
+        "dur": 1.208
+      },
+      "glide": {
+        "row": 18,
+        "frames": 49,
+        "dur": 3.25
+      },
+      "idle": {
+        "row": 67,
+        "frames": 49,
+        "dur": 3.25
+      },
+      "walk": {
+        "row": 116,
+        "frames": 19,
+        "dur": 1.25
+      },
+      "eat": {
+        "row": 135,
+        "frames": 44,
+        "dur": 2.917
+      }
+    },
+    "height": 0.414,
+    "width": 3.15
+  },
+  "leviathan": {
+    "bones": 51,
+    "rows": 106,
+    "clips": {
+      "swim": {
+        "row": 0,
+        "frames": 106,
+        "dur": 13.2
+      }
+    },
+    "height": 0.152,
+    "width": 0.314
+  }
+}
