@@ -456,27 +456,52 @@ export function applyPower(s: WorldState, a: Action): ActionImpact {
       });
       impact.origin = sea;
       impact.angle = Math.atan2(ty(at) - ty(sea), tx(at) - tx(sea));
-      const len = best + 4;
-      const reached: [number, number][] = [];
+      // The wave runs inland until the ground rises above it: up the valleys,
+      // over the low ground, stopping at the hills. Flooded from the sea inward.
+      const cos = Math.cos(impact.angle);
+      const sin = Math.sin(impact.angle);
+      const REACH = 30;
+      const along = (i: number) => (tx(i) - tx(sea)) * cos + (ty(i) - ty(sea)) * sin;
+      const lat = (i: number) => Math.abs(-(tx(i) - tx(sea)) * sin + (ty(i) - ty(sea)) * cos);
+      const runup = (i: number) => {
+        const a = along(i);
+        const width = 7 + a * 0.45;
+        const inland = Math.max(0, a - best);
+        return 3.4 * (1 - inland / REACH) - (lat(i) / width) * 1.2;
+      };
+      const inBand = (i: number) => {
+        const a = along(i);
+        return a >= 0 && a <= best + REACH && lat(i) <= 7 + a * 0.45;
+      };
+      const seen = new Set<number>();
+      const queue: number[] = [];
       for (let i = 0; i < s.tiles.length; i++) {
         const o = s.tiles[i];
-        if (o.water === SEA || o.h > 2.2) continue;
-        const rx = tx(i) - tx(sea);
-        const ry = ty(i) - ty(sea);
-        const along = rx * Math.cos(impact.angle) + ry * Math.sin(impact.angle);
-        const lat = Math.abs(-rx * Math.sin(impact.angle) + ry * Math.cos(impact.angle));
-        if (along < 0 || along > len || lat > 3 + along * 0.35) continue;
-        reached.push([i, along]);
+        if (o.water === SEA || !inBand(i) || o.h > runup(i)) continue;
+        if (around(i).some((n) => s.tiles[n].water === SEA)) {
+          seen.add(i);
+          queue.push(i);
+        }
       }
+      for (let q = 0; q < queue.length; q++)
+        for (const n of around(queue[q])) {
+          if (seen.has(n) || s.tiles[n].water === SEA || !inBand(n) || s.tiles[n].h > runup(n))
+            continue;
+          seen.add(n);
+          queue.push(n);
+        }
+      const reached = queue.map((i) => [i, along(i)] as [number, number]);
       reached.sort((p, q) => p[1] - q[1] || p[0] - q[0]);
       impact.tiles = reached.map(([i]) => i);
-      for (const [i, along] of reached) {
+      for (const [i, a] of reached) {
         const o = s.tiles[i];
+        const inland = a - best;
         o.flood = 3 + randInt(s, 2);
         o.fire = 0;
-        o.forest *= 0.6;
+        // The front tears the forest down; further in, it thins it.
+        o.forest *= inland < 10 ? 0.3 : 0.6;
         o.veg *= 0.5;
-        if (o.build && (o.h < 1.2 || along < len * 0.7) && rand(s) < 0.7) wreck(s, i);
+        if (o.build && (o.h < runup(i) - 0.4 || inland < 12) && rand(s) < 0.75) wreck(s, i);
       }
       impact.people = casualties(s, impact.tiles, 0.5);
       impact.deaths = cull(s, region, 0.15);

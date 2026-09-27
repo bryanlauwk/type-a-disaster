@@ -6,6 +6,7 @@ import { tx, ty, wx, wz, type ActionRecord, type Tile, type WorldState } from "@
 import { heightAt } from "./palette";
 import { lifeBus } from "./Dinos";
 import { Puffs } from "./fx/vfx";
+import { TsunamiSpectacle, tsunamiPlan } from "./Tsunami";
 
 /** A god's act being played out on screen. */
 export interface ActRun {
@@ -45,6 +46,7 @@ export function planReveal(run: ActRun): TileReveal[] {
     )
       changed.push(i);
   }
+  const tsu = record.power === "tsunami" && impact ? tsunamiPlan(before, record) : null;
   const order = new Map<number, number>();
   (impact?.tiles ?? []).forEach((i, k) => order.set(i, k));
   const at = (i: number): number => {
@@ -54,13 +56,8 @@ export function planReveal(run: ActRun): TileReveal[] {
         return 1.8 + (k ?? 20) * 0.05;
       case "meteor":
         return 2.1 + dist(i, record.tile) * 0.08;
-      case "tsunami": {
-        const o = impact?.origin ?? record.tile;
-        const along =
-          (tx(i) - tx(o)) * Math.cos(impact?.angle ?? 0) +
-          (ty(i) - ty(o)) * Math.sin(impact?.angle ?? 0);
-        return 1 + Math.max(0, along) / 6;
-      }
+      case "tsunami":
+        return tsu ? tsu.arrival(tsu.alongOf(i)) : 1;
       case "wildfire":
       case "stampede":
         return 0.6 + (k ?? 0) * 0.08;
@@ -267,53 +264,6 @@ function Eruption({ tiles, getT }: { tiles: Tile[]; getT: () => number }) {
 }
 
 /** The wall of water: a foaming crest running inland. */
-function Tsunami({ run, getT }: { run: ActRun; getT: () => number }) {
-  const impact = run.record.impact!;
-  const origin = impact.origin ?? run.record.tile;
-  const angle = impact.angle;
-  const crest = useRef<THREE.Group>(null);
-  const len = dist(origin, run.record.tile) + 4;
-  useFrame(() => {
-    const t = getT();
-    const g = crest.current;
-    if (!g) return;
-    const along = Math.max(0, (t - 1) * 6);
-    g.visible = t > 0.2 && along < len + 1;
-    const x = wx(origin) + Math.cos(angle) * along;
-    const z = wz(origin) + Math.sin(angle) * along;
-    g.position.set(x, 0, z);
-    g.rotation.y = -angle;
-    const width = 6 + along * 0.7;
-    g.scale.set(1, Math.max(0.2, 1.6 - along / (len + 2)), width);
-  });
-  return (
-    <group ref={crest}>
-      <mesh position={[0, 0.6, 0]}>
-        <boxGeometry args={[0.8, 1.2, 1]} />
-        <meshStandardMaterial color="#3f8c96" transparent opacity={0.85} roughness={0.2} />
-      </mesh>
-      <mesh position={[0.25, 1.15, 0]}>
-        <boxGeometry args={[0.4, 0.25, 1.02]} />
-        <meshStandardMaterial color="#f3f8f6" roughness={0.6} />
-      </mesh>
-      <Puffs
-        getT={getT}
-        origin={[0.2, 1.1, 0]}
-        count={50}
-        duration={1}
-        spread={0.5}
-        rise={1.2}
-        fall={2}
-        size={[0.2, 0.7]}
-        color="#f4fafa"
-        opacity={0.85}
-        loop
-        seed={9}
-      />
-    </group>
-  );
-}
-
 /** Lightning strikes where the forest catches. */
 function Storm({ run, reveal, getT }: { run: ActRun; reveal: TileReveal[]; getT: () => number }) {
   const bolt = useRef<THREE.Group>(null);
@@ -498,7 +448,10 @@ export function ActSpectacle({
   const last = useRef(-1);
   const done = useRef(false);
   const getT = () => elapsed.current;
-  const total = actLength(reveal);
+  const total =
+    run.record.power === "tsunami" && run.record.impact
+      ? Math.max(actLength(reveal), tsunamiPlan(run.before, run.record).end)
+      : actLength(reveal);
   const power = run.record.power;
   const x = wx(run.record.tile);
   const z = wz(run.record.tile);
@@ -537,7 +490,15 @@ export function ActSpectacle({
     case "eruption":
       return <Eruption tiles={run.before.tiles} getT={getT} />;
     case "tsunami":
-      return <Tsunami run={run} getT={getT} />;
+      return (
+        <TsunamiSpectacle
+          before={run.before}
+          after={run.after}
+          record={run.record}
+          getT={getT}
+          shake={shake}
+        />
+      );
     case "storm":
       return <Storm run={run} reveal={reveal} getT={getT} />;
     case "plague":
@@ -637,6 +598,8 @@ export function ActCamera({ run }: { run: ActRun | null }) {
   useEffect(() => {
     if (!run || !controls) return;
     const p = run.record.power;
+    // The tsunami directs its own camera.
+    if (p === "tsunami") return;
     const focus =
       p === "eruption"
         ? run.before.tiles.findIndex((t) => t.landmark === "great_volcano")
@@ -646,7 +609,7 @@ export function ActCamera({ run }: { run: ActRun | null }) {
     const x = wx(focus);
     const z = wz(focus);
     const y = heightAt(run.before.tiles, x, z);
-    const far = p === "eruption" ? 34 : p === "tsunami" || p === "storm" ? 26 : 18;
+    const far = p === "eruption" ? 48 : p === "storm" ? 34 : 22;
     const toT = new THREE.Vector3(x, Math.max(0, y * 0.5), z);
     const off = camera.position.clone().sub(controls.target).normalize().multiplyScalar(far);
     off.y = Math.max(off.y, far * 0.55);

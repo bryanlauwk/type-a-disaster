@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   HALF,
@@ -26,55 +26,150 @@ float vnoise(vec2 p) {
   return mix(mix(h21(i), h21(i + vec2(1.0, 0.0)), u.x), mix(h21(i + vec2(0.0, 1.0)), h21(i + vec2(1.0, 1.0)), u.x), u.y);
 }`;
 
-const SEA_VERTEX = /* glsl */ `
-varying vec3 vWorld;
-void main() {
-  vec4 w = modelMatrix * vec4(position, 1.0);
-  vWorld = w.xyz;
-  gl_Position = projectionMatrix * viewMatrix * w;
-}`;
+/** Shared by the sea and the tsunami: where the sea is pulled back, and by how much. */
+export const seaFx = {
+  /** Centre of the drawdown (world x, z) and its reach. */
+  drawX: 0,
+  drawZ: 0,
+  drawR: 20,
+  /** 0 = normal sea; 1 = the sea sucked far out. */
+  draw: 0,
+};
 
-const SEA_FRAGMENT = /* glsl */ `
+let waterNormals: THREE.Texture | null = null;
+/** The ripple normal map shared by all water (three.js example texture, MIT). */
+export function waterNormalMap(): THREE.Texture {
+  if (!waterNormals) {
+    waterNormals = new THREE.TextureLoader().load("/textures/water/normals.webp");
+    waterNormals.wrapS = waterNormals.wrapT = THREE.RepeatWrapping;
+    waterNormals.anisotropy = 4;
+  }
+  return waterNormals;
+}
+
+// Gerstner swell: four trains of waves rolling in from the open ocean,
+// smaller and steeper where the water shallows, with the tsunami's drawdown.
+const WAVES = /* glsl */ `
 uniform float uTime;
-uniform float uLight;
-uniform vec3 uSun;
-uniform vec3 uDeep;
-uniform vec3 uShallow;
 uniform sampler2D uHeight;
-varying vec3 vWorld;
-${NOISE}
+uniform vec4 uDraw;   // x, z, reach, amount
+uniform float uOuter;
+uniform float uNearHalf;
 float groundAt(vec2 p) {
-  vec2 uv = (p + 32.0) / 64.0;
+  vec2 uv = (p + ${HALF.toFixed(1)}) / ${SIZE.toFixed(1)};
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return -6.0;
   return texture2D(uHeight, uv).r * 16.0 - 8.0;
 }
+vec3 gerstner(vec2 p, vec2 dir, float len, float amp, float steep, inout vec3 tang, inout vec3 bin) {
+  float k = 6.2831853 / len;
+  float c = sqrt(9.8 / k) * 0.35;
+  vec2 d = normalize(dir);
+  float f = k * (dot(d, p) - c * uTime);
+  float a = amp;
+  float q = steep / (k * a * 4.0 + 0.0001);
+  tang += vec3(-d.x * d.x * q * k * a * sin(f), d.x * k * a * cos(f), -d.x * d.y * q * k * a * sin(f));
+  bin += vec3(-d.x * d.y * q * k * a * sin(f), d.y * k * a * cos(f), -d.y * d.y * q * k * a * sin(f));
+  return vec3(d.x * q * a * cos(f), a * sin(f), d.y * q * a * cos(f));
+}
+float drawdown(vec2 p) {
+  float d = length(p - uDraw.xy);
+  return uDraw.w * smoothstep(uDraw.z, uDraw.z * 0.35, d);
+}
+`;
+
+const SEA_VERTEX = /* glsl */ `
+${WAVES}
+varying vec3 vWorld;
+varying vec3 vNormalW;
+varying float vCrest;
+varying float vDepth;
+#include <fog_pars_vertex>
+void main() {
+  vec4 w = modelMatrix * vec4(position, 1.0);
+  float depth = -groundAt(w.xz);
+  // Waves die down over the shallows and on the far horizon (no mesh there).
+  float calm = smoothstep(0.05, 2.5, depth);
+  // The swell fades out towards the edge of the finely divided sea, so it meets
+  // the open ocean without a seam.
+  calm *= (1.0 - uOuter) * (1.0 - smoothstep(uNearHalf - 34.0, uNearHalf - 2.0, max(abs(w.x), abs(w.z))));
+  vec3 tang = vec3(1.0, 0.0, 0.0);
+  vec3 bin = vec3(0.0, 0.0, 1.0);
+  vec3 off = vec3(0.0);
+  // Trade-wind swell from the south-east, with cross-seas on top.
+  off += gerstner(w.xz, vec2(-0.62, -0.78), 15.0, 0.14 * calm, 0.5, tang, bin);
+  off += gerstner(w.xz, vec2(-0.85, -0.35), 9.3, 0.08 * calm, 0.45, tang, bin);
+  off += gerstner(w.xz, vec2(-0.2, -0.95), 5.1, 0.045 * calm, 0.45, tang, bin);
+  off += gerstner(w.xz, vec2(0.55, -0.7), 2.7, 0.022 * calm, 0.4, tang, bin);
+  off += gerstner(w.xz, vec2(-0.9, 0.25), 1.6, 0.012 * calm, 0.35, tang, bin);
+  w.xyz += off;
+  w.y -= drawdown(w.xz) * 1.4;
+  vWorld = w.xyz;
+  vNormalW = normalize(cross(bin, tang));
+  vCrest = off.y;
+  vDepth = depth;
+  vec4 mvPosition = viewMatrix * w;
+  gl_Position = projectionMatrix * mvPosition;
+  #include <fog_vertex>
+}`;
+
+const SEA_FRAGMENT = /* glsl */ `
+${WAVES}
+${NOISE}
+uniform float uLight;
+uniform vec3 uSun;
+uniform vec3 uSunColor;
+uniform vec3 uDeep;
+uniform vec3 uShallow;
+uniform vec3 uSky;
+uniform vec3 uHorizon;
+uniform sampler2D uRipples;
+varying vec3 vWorld;
+varying vec3 vNormalW;
+varying float vCrest;
+varying float vDepth;
+#include <fog_pars_fragment>
 void main() {
   vec2 q = vWorld.xz;
-  float depth = -groundAt(q);
-  // Swell rolling in, with small chop on top.
-  float n1 = vnoise(q * 0.35 + vec2(uTime * 0.08, uTime * 0.05));
-  float n2 = vnoise(q * 1.4 - vec2(uTime * 0.25, -uTime * 0.18));
-  float n3 = vnoise(q * 4.0 + vec2(uTime * 0.6, uTime * 0.4));
-  vec3 n = normalize(vec3((n1 - 0.5) * 0.5 + (n2 - 0.5) * 0.35 + (n3 - 0.5) * 0.15, 1.0, (n2 - 0.5) * 0.4 + (n3 - 0.5) * 0.2));
+  // The open-ocean ring leaves the middle to the finely divided near sea.
+  if (uOuter > 0.5 && max(abs(q.x), abs(q.y)) < uNearHalf - 0.5) discard;
+  float depth = -groundAt(q) - drawdown(q) * 1.4;
+  if (depth < -0.02) discard;
+  // Fine ripples on top of the swell.
+  vec3 r1 = texture2D(uRipples, q * 0.11 + vec2(uTime * 0.012, uTime * 0.008)).xyz * 2.0 - 1.0;
+  vec3 r2 = texture2D(uRipples, q * 0.037 - vec2(uTime * 0.006, -uTime * 0.01)).xyz * 2.0 - 1.0;
+  vec3 r3 = texture2D(uRipples, q * 0.43 + vec2(-uTime * 0.03, uTime * 0.02)).xyz * 2.0 - 1.0;
+  vec3 rip = r1 * 0.5 + r2 * 0.35 + r3 * 0.25;
+  vec3 n = normalize(vNormalW + vec3(rip.x, 0.0, rip.y) * 0.45);
   vec3 view = normalize(cameraPosition - vWorld);
-  float fres = pow(1.0 - max(dot(n, view), 0.0), 4.0);
-  float spec = pow(max(dot(reflect(-uSun, n), view), 0.0), 90.0);
-  // Turquoise over the sand, deep blue where the shelf drops away.
-  vec3 col = mix(uShallow, uDeep, smoothstep(0.2, 2.2, depth));
-  col += vec3(0.55, 0.68, 0.75) * fres * 0.4;
-  // Surf breaking along the shore, pulsing with the swell.
-  float surf = (1.0 - smoothstep(0.0, 0.28, depth)) * step(-0.05, depth);
-  float churn = vnoise(q * 3.5 + vec2(uTime * 0.7, -uTime * 0.5));
-  float wave = 0.5 + 0.5 * sin(depth * 22.0 - uTime * 2.2 + churn * 3.0);
-  float foam = surf * smoothstep(0.35, 0.8, churn * 0.6 + wave * 0.6);
-  col = mix(col, vec3(0.95, 0.97, 0.96), foam * 0.85);
-  col = col * uLight + vec3(1.0, 0.96, 0.88) * spec * 0.9 * uLight;
-  float alpha = mix(0.55, 1.0, smoothstep(0.15, 1.6, depth));
-  alpha = max(alpha, foam * 0.9);
-  if (depth < -0.05) discard;
+  float ndv = max(dot(n, view), 0.0);
+  float fres = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+  // Reflected sky: bright near the horizon, bluer overhead.
+  vec3 refl = reflect(-view, n);
+  vec3 sky = mix(uHorizon, uSky, smoothstep(0.0, 0.5, refl.y));
+  // Sun glitter.
+  vec3 h = normalize(uSun + view);
+  float spec = pow(max(dot(n, h), 0.0), 380.0) * 18.0 + pow(max(dot(n, h), 0.0), 40.0) * 0.35;
+  // Water colour: light absorbed with depth, turquoise over sand.
+  float absorb = 1.0 - exp(-max(depth, 0.0) * 0.9);
+  vec3 body = mix(uShallow, uDeep, absorb);
+  // Light through the backs of the waves.
+  float sss = pow(max(dot(view, -uSun), 0.0), 3.0) * max(vCrest, 0.0) * 6.0 + max(vCrest, 0.0) * 1.4;
+  body += vec3(0.05, 0.28, 0.24) * sss;
+  vec3 col = mix(body, sky, fres * 0.85);
+  // Surf and whitecaps.
+  float churn = vnoise(q * 2.3 + vec2(uTime * 0.6, -uTime * 0.4)) * 0.6 + vnoise(q * 7.0 - uTime * 0.8) * 0.4;
+  float shore = (1.0 - smoothstep(0.0, 0.35, depth));
+  float bands = 0.5 + 0.5 * sin(depth * 26.0 - uTime * 2.4 + churn * 3.0);
+  float foam = shore * smoothstep(0.45, 0.85, churn * 0.55 + bands * 0.6);
+  foam = max(foam, smoothstep(0.14, 0.22, vCrest) * smoothstep(0.68, 0.85, churn) * 0.7);
+  col = mix(col, vec3(0.93, 0.96, 0.96), foam * 0.9);
+  col = col * uLight + uSunColor * spec * uLight;
+  float alpha = mix(0.35, 0.97, smoothstep(0.02, 1.8, depth));
+  alpha = max(alpha, max(foam * 0.95, fres));
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
+  #include <fog_fragment>
 }`;
 
 /** Island heights as a texture, so the sea knows how deep it is. */
@@ -92,7 +187,15 @@ function heightTexture(tiles: Tile[]) {
   return tex;
 }
 
-/** The ocean around the island: see-through over the shallows, deep blue beyond. */
+const SUN_COLOR = new THREE.Color();
+/** Size of the finely divided sea around the island. */
+const NEAR = SIZE + 80;
+
+/**
+ * The ocean: a swell of Gerstner waves that shoals and breaks over the
+ * shallows, sky reflections and sun glitter, turquoise where it's shallow and
+ * deep blue off the shelf, with surf along every shore.
+ */
 export function Sea({ tiles }: { tiles: Tile[] }) {
   const heights = useMemo(() => heightTexture(tiles), [tiles]);
   useEffect(() => () => heights.dispose(), [heights]);
@@ -101,29 +204,78 @@ export function Sea({ tiles }: { tiles: Tile[] }) {
       new THREE.ShaderMaterial({
         vertexShader: SEA_VERTEX,
         fragmentShader: SEA_FRAGMENT,
-        uniforms: {
-          uTime: { value: 0 },
-          uLight: { value: 1 },
-          uSun: { value: new THREE.Vector3(0.5, 0.75, 0.3).normalize() },
-          uDeep: { value: new THREE.Color("#12405a") },
-          uShallow: { value: new THREE.Color("#3a9aa0") },
-          uHeight: { value: null as THREE.Texture | null },
-        },
+        uniforms: THREE.UniformsUtils.merge([
+          THREE.UniformsLib.fog,
+          {
+            uTime: { value: 0 },
+            uLight: { value: 1 },
+            uSun: { value: new THREE.Vector3(0.5, 0.75, 0.3).normalize() },
+            uSunColor: { value: new THREE.Color("#fff3dc") },
+            uDeep: { value: new THREE.Color("#0b3144") },
+            uShallow: { value: new THREE.Color("#2fa3a0") },
+            uSky: { value: new THREE.Color("#6f9fc6") },
+            uHorizon: { value: new THREE.Color("#cfe0ea") },
+            uHeight: { value: null as THREE.Texture | null },
+            uRipples: { value: null as THREE.Texture | null },
+            uDraw: { value: new THREE.Vector4(0, 0, 20, 0) },
+            uOuter: { value: 0 },
+            uNearHalf: { value: NEAR / 2 },
+          },
+        ]),
         transparent: true,
         depthWrite: false,
+        fog: true,
       }),
     [],
   );
-  useEffect(() => () => material.dispose(), [material]);
+  // The open ocean shares everything but its flag.
+  const outer = useMemo(() => {
+    const m = material.clone();
+    m.uniforms = { ...material.uniforms, uOuter: { value: 1 } };
+    return m;
+  }, [material]);
+  useEffect(
+    () => () => {
+      material.dispose();
+      outer.dispose();
+    },
+    [material, outer],
+  );
+  const scene = useThree((st) => st.scene);
   useFrame(({ clock }) => {
-    material.uniforms.uTime.value = clock.elapsedTime;
-    material.uniforms.uLight.value = 0.22 + env.daylight * 0.85 + env.flash * 0.3;
-    material.uniforms.uHeight.value = heights;
+    const u = material.uniforms;
+    u.uTime.value = clock.elapsedTime;
+    u.uLight.value = 0.22 + env.daylight * 0.85 + env.flash * 0.3;
+    u.uHeight.value = heights;
+    u.uRipples.value = waterNormalMap();
+    u.uDraw.value.set(seaFx.drawX, seaFx.drawZ, seaFx.drawR, seaFx.draw);
+    // The sky it reflects follows the real sky.
+    const bg = scene.background as THREE.Color | null;
+    if (bg && (bg as THREE.Color).isColor) {
+      u.uHorizon.value.copy(bg).lerp(SUN_COLOR.set("#ffffff"), 0.15);
+      u.uSky.value.copy(bg).multiplyScalar(0.7);
+    }
+    const sun = env.sunDir;
+    if (sun) u.uSun.value.copy(sun);
+    u.uSunColor.value.setRGB(1, 0.93 - env.dusk * 0.25, 0.82 - env.dusk * 0.45);
   });
   return (
-    <mesh rotation-x={-Math.PI / 2} position-y={0.0} material={material} renderOrder={1}>
-      <planeGeometry args={[320, 320, 1, 1]} />
-    </mesh>
+    <group>
+      {/* Near sea: finely divided so the swell can roll. */}
+      <mesh rotation-x={-Math.PI / 2} material={material} renderOrder={1} frustumCulled={false}>
+        <planeGeometry args={[NEAR, NEAR, 300, 300]} />
+      </mesh>
+      {/* Open ocean out to the horizon. */}
+      <mesh
+        rotation-x={-Math.PI / 2}
+        position-y={-0.01}
+        material={outer}
+        renderOrder={1}
+        frustumCulled={false}
+      >
+        <planeGeometry args={[1800, 1800, 8, 8]} />
+      </mesh>
+    </group>
   );
 }
 
@@ -145,21 +297,29 @@ const FRESH_FRAGMENT = /* glsl */ `
 uniform float uTime;
 uniform float uLight;
 uniform vec3 uSun;
+uniform vec3 uSky;
+uniform sampler2D uRipples;
 varying vec3 vColor;
 varying vec3 vWorld;
 varying float vFlow;
 ${NOISE}
 void main() {
-  vec2 q = vWorld.xz * 2.0;
-  float a = vnoise(q + vec2(uTime * 0.9 * vFlow, uTime * 0.7 * vFlow));
-  float b = vnoise(q * 2.3 - vec2(uTime * 0.6, -uTime * 0.8 * vFlow));
-  vec3 n = normalize(vec3(a - 0.5, 1.2, b - 0.5));
+  vec2 q = vWorld.xz;
+  // Ripples dragged downstream; still water barely stirs.
+  vec3 r1 = texture2D(uRipples, q * 0.35 + vec2(uTime * 0.05, uTime * 0.12) * vFlow).xyz * 2.0 - 1.0;
+  vec3 r2 = texture2D(uRipples, q * 0.9 - vec2(uTime * 0.03, uTime * 0.2) * vFlow).xyz * 2.0 - 1.0;
+  vec3 n = normalize(vec3((r1.x + r2.x * 0.6) * 0.5, 1.0, (r1.y + r2.y * 0.6) * 0.5));
   vec3 view = normalize(cameraPosition - vWorld);
-  float spec = pow(max(dot(reflect(-uSun, n), view), 0.0), 60.0);
-  float foam = smoothstep(0.72, 0.9, a * b * 1.8) * vFlow;
-  vec3 col = mix(vColor, vec3(0.92), foam * 0.6) * (0.75 + 0.25 * max(dot(n, uSun), 0.0));
-  col = col * uLight + spec * 0.6 * uLight;
-  gl_FragColor = vec4(col, 0.86);
+  float fres = 0.03 + 0.97 * pow(1.0 - max(dot(n, view), 0.0), 5.0);
+  vec3 h = normalize(uSun + view);
+  float spec = pow(max(dot(n, h), 0.0), 220.0) * 6.0;
+  float foam = smoothstep(0.7, 0.9, vnoise(q * 3.0 - vec2(0.0, uTime * 1.5 * vFlow)) * r1.z) * vFlow;
+  // Floodwater (flow ~0.4) is murky and lets the ground show through.
+  float flood = step(0.3, vFlow) * step(vFlow, 0.5);
+  vec3 col = mix(vColor, uSky, fres * mix(0.8, 0.35, flood));
+  col = mix(col, vec3(0.92), foam * 0.5);
+  col = col * uLight + spec * uLight * mix(1.0, 0.4, flood);
+  gl_FragColor = vec4(col, mix(mix(0.78, 0.95, fres), 0.62, flood));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -176,7 +336,9 @@ function surface(t: Tile): number {
   return t.h + 0.08;
 }
 
-const wet = (t: Tile) => t.water === RIVER || t.water === LAKE || (t.flood > 0 && t.water !== SEA);
+// Rivers and lakes are drawn by the ground itself (smooth banks); this mesh is
+// for water that spills over it: floods.
+const wet = (t: Tile) => t.flood > 0 && t.water !== SEA && t.water !== RIVER && t.water !== LAKE;
 
 /**
  * Rivers, lakes, ponds and floodwater: one mesh with a quad per wet tile,
@@ -257,16 +419,25 @@ export function FreshWater({ tiles }: { tiles: Tile[] }) {
           uTime: { value: 0 },
           uLight: { value: 1 },
           uSun: { value: new THREE.Vector3(0.5, 0.75, 0.3).normalize() },
+          uSky: { value: new THREE.Color("#9fc0d6") },
+          uRipples: { value: null as THREE.Texture | null },
         },
         transparent: true,
         depthWrite: false,
+        side: THREE.DoubleSide,
       }),
     [],
   );
   useEffect(() => () => material.dispose(), [material]);
+  const scene = useThree((st) => st.scene);
   useFrame(({ clock }) => {
-    material.uniforms.uTime.value = clock.elapsedTime;
-    material.uniforms.uLight.value = 0.25 + env.daylight * 0.8 + env.flash * 0.3;
+    const u = material.uniforms;
+    u.uTime.value = clock.elapsedTime;
+    u.uLight.value = 0.25 + env.daylight * 0.8 + env.flash * 0.3;
+    u.uRipples.value = waterNormalMap();
+    if (env.sunDir) u.uSun.value.copy(env.sunDir);
+    const bg = scene.background as THREE.Color | null;
+    if (bg && bg.isColor) u.uSky.value.copy(bg);
   });
   return <mesh geometry={geometry} material={material} renderOrder={2} />;
 }
@@ -327,6 +498,7 @@ export function Lava({ tiles }: { tiles: Tile[] }) {
         vertexShader: FRESH_VERTEX,
         fragmentShader: LAVA_FRAGMENT,
         uniforms: { uTime: { value: 0 } },
+        side: THREE.DoubleSide,
       }),
     [],
   );

@@ -18,6 +18,7 @@ import {
 import { MODELS, type Anim, type Geo, type Part, type Role } from "./dinoModels";
 import { heightAt, tileAtWorld } from "./palette";
 import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
+import { surgeBus } from "./Tsunami";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -80,6 +81,8 @@ export interface Agent {
   /** A youngster keeps close to an adult of its kind. */
   mum: Agent | null;
   young: boolean;
+  /** Seconds spent carried by floodwater. */
+  swept?: number;
 }
 
 /** Shared with the rest of the scene: where the dangerous animals are right now. */
@@ -625,6 +628,40 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         a.phase += dt * 14;
         a.y = Math.max(0, heightAt(w.tiles, a.x, a.z));
         continue;
+      }
+
+      // --- A tsunami: run from it, or be carried off by it -----------------------
+      const sb = surgeBus;
+      if (sb.active && sb.plan && model.gait !== "fly" && model.gait !== "swim") {
+        const pl = sb.plan;
+        const al = (a.x - pl.ox) * pl.cos + (a.z - pl.oz) * pl.sin;
+        const arrive = pl.arrival(al);
+        const ti = tileAtWorld(a.x, a.z);
+        const flooded = ti >= 0 && w.tiles[ti].flood > 0;
+        if (flooded && sb.t >= arrive && sb.t < pl.drainAt) {
+          // Swept along with the water, tumbling, until it loses its footing for good.
+          const push = pl.surge * 0.55 * Math.max(0.15, 1 - (sb.t - arrive) / 5);
+          a.x += pl.cos * push * dt;
+          a.z += pl.sin * push * dt;
+          a.yaw += dt * (hash(a.id, 72) - 0.5) * 3;
+          a.state = "flee";
+          a.speed = 0;
+          a.swept = (a.swept ?? 0) + dt;
+          if (a.swept > 1.6 && hash(a.id, 71) < (a.scale > 2 ? 0.35 : 0.7)) {
+            a.state = "dead";
+            a.deadFor = 0;
+          }
+          a.y = Math.max(0, heightAt(w.tiles, a.x, a.z)) + 0.15;
+          continue;
+        }
+        if (sb.t > arrive - 3 && sb.t < arrive && al > pl.coast - 3 && al < pl.far + 4) {
+          // The water's coming: stampede inland.
+          a.state = "flee";
+          a.timer = 2;
+          a.tx = a.x + pl.cos * 10;
+          a.tz = a.z + pl.sin * 10;
+          a.herd = 0;
+        }
       }
 
       // --- Deciding what to do ------------------------------------------------

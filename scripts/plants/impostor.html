@@ -1,0 +1,49 @@
+<!doctype html><html><body style="margin:0;background:#888">
+<script type="importmap">{"imports":{"three":"./three/build/three.module.js","three/addons/":"./three/examples/jsm/"}}</script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const q=new URLSearchParams(location.search);
+const src=q.get('src'); const F=Number(q.get('f')||512);
+const r=new THREE.WebGLRenderer({antialias:true,alpha:true,preserveDrawingBuffer:true});
+r.setPixelRatio(1); r.setClearColor(0x000000,0); document.body.appendChild(r.domElement);
+r.outputColorSpace=THREE.SRGBColorSpace;
+const L=new GLTFLoader();
+L.register(parser=>({name:'KHR_materials_pbrSpecularGlossiness',
+ ext(i){const d=(parser.json.materials||[])[i];return d&&d.extensions&&d.extensions.KHR_materials_pbrSpecularGlossiness;},
+ getMaterialType(i){return this.ext(i)?THREE.MeshStandardMaterial:null;},
+ extendMaterialParams(i,p){const e=this.ext(i);if(!e)return Promise.resolve();const [a,b,c]=e.diffuseFactor||[1,1,1];p.color=new THREE.Color().setRGB(a,b,c,THREE.LinearSRGBColorSpace);return e.diffuseTexture?parser.assignTexture(p,'map',e.diffuseTexture,THREE.SRGBColorSpace):Promise.resolve();}}));
+const g=await L.loadAsync('plants/'+src);
+const root=g.scene; root.updateMatrixWorld(true);
+// Only one of several variants in a pack: optional node filter.
+const only=q.get('only');
+if(only){root.traverse(o=>{if(o.isMesh){let keep=false;let p=o;while(p){if(p.name&&new RegExp(only).test(p.name))keep=true;p=p.parent;}o.visible=keep;}});}
+const box=new THREE.Box3();root.traverse(o=>{if(o.isMesh&&o.visible){o.geometry.computeBoundingBox();const b=o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld);box.union(b);}});
+const size=box.getSize(new THREE.Vector3());const c=box.getCenter(new THREE.Vector3());
+const H=size.y; const Rw=Math.hypot(size.x,size.z)/2*1.02; const el2=48*Math.PI/180; const Rh=Math.max(H*0.52, 0.5*(H*Math.cos(el2)+2*Rw*Math.sin(el2))*1.04); const R=Math.max(Rw,Rh); const FW=Math.max(32,Math.round(F*Rw/Rh/8)*8);
+const scene=new THREE.Scene();scene.add(root);
+root.position.set(-c.x,-box.min.y,-c.z);root.updateMatrixWorld(true);
+const cy=H/2;
+// Albedo pass materials: softly lit from the sky, darker underneath (baked occlusion).
+const albedo=new Map(), normal=new Map();
+root.traverse(o=>{if(!o.isMesh)return;const ms=Array.isArray(o.material)?o.material:[o.material];
+ albedo.set(o,ms.map(m=>{const n=new THREE.MeshLambertMaterial({map:m.map||null,color:m.color?m.color.clone():new THREE.Color(1,1,1),alphaTest:0.5,side:THREE.DoubleSide,vertexColors:!!o.geometry.attributes.color});if(n.map)n.map.colorSpace=THREE.SRGBColorSpace;return n;}));
+ normal.set(o,ms.map(m=>new THREE.ShaderMaterial({side:THREE.DoubleSide,uniforms:{map:{value:m.map||null},useMap:{value:m.map?1:0}},
+  vertexShader:'varying vec3 vN;varying vec2 vUv;void main(){vUv=uv;vN=normalize(normalMatrix*normal);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}',
+  fragmentShader:'uniform sampler2D map;uniform float useMap;varying vec3 vN;varying vec2 vUv;void main(){if(useMap>0.5&&texture2D(map,vUv).a<0.5)discard;vec3 n=normalize(vN)*(gl_FrontFacing?1.0:-1.0);gl_FragColor=vec4(n*0.5+0.5,1.0);}'})));
+});
+scene.add(new THREE.HemisphereLight('#ffffff','#5a5a52',2.6));
+r.setSize(FW*4,F*4);
+const cam=new THREE.OrthographicCamera(-Rw,Rw,Rh,-Rh,0.01,R*10);
+const EL=[12,48];
+function pass(which){
+ root.traverse(o=>{if(o.isMesh){const m=(which==='a'?albedo:normal).get(o);o.material=m.length>1?m:m[0];}});
+ r.setScissorTest(true);r.clear();
+ for(let e=0;e<2;e++)for(let a=0;a<8;a++){const k=e*8+a;const az=a/8*Math.PI*2, el=EL[e]*Math.PI/180;
+  cam.position.set(Math.sin(az)*Math.cos(el)*R*4, cy+Math.sin(el)*R*4, Math.cos(az)*Math.cos(el)*R*4);cam.lookAt(0,cy,0);cam.updateProjectionMatrix();
+  const x=(k%4)*FW, y=F*3-Math.floor(k/4)*F; r.setViewport(x,y,FW,F);r.setScissor(x,y,FW,F);r.render(scene,cam);}
+ return r.domElement.toDataURL('image/png');
+}
+window.RESULT={albedo:pass('a'),normal:pass('n'),meta:{height:H,rw:Rw,rh:Rh,cy,elev:EL,fw:FW,fh:F,width:Math.hypot(size.x,size.z)}};
+document.title='done';
+</script></body></html>

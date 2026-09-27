@@ -1,9 +1,12 @@
-import { useLayoutEffect, useMemo } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useFrame } from "@react-three/fiber";
 import type { ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { HALF, LAKE, RIVER, SEA, SIZE, type Tile } from "@/lib/island/types";
 import { around } from "@/lib/island/terrain";
 import { heightAt, tileAtWorld, tileColor } from "./palette";
+import { groundMaterial, groundUniforms, loadGround, tileGround } from "./ground";
+import { env } from "./fx/env";
 
 /** Vertices per tile along each side. */
 const RES = 2;
@@ -43,8 +46,10 @@ export function Terrain({
   tiles,
   onPick,
   onHover,
+  dry = false,
 }: {
   tiles: Tile[];
+  dry?: boolean;
   onPick?: (tile: number, e: ThreeEvent<MouseEvent>) => void;
   onHover?: (tile: number) => void;
 }) {
@@ -52,8 +57,28 @@ export function Terrain({
     const g = new THREE.PlaneGeometry(SIZE, SIZE, N - 1, N - 1);
     g.rotateX(-Math.PI / 2);
     g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(N * N * 3), 3));
+    g.setAttribute("splatA", new THREE.BufferAttribute(new Float32Array(N * N * 4), 4));
+    g.setAttribute("splatB", new THREE.BufferAttribute(new Float32Array(N * N * 4), 4));
+    // Rivers, lakes and the lagoon are painted into the ground itself (x: wet, y: lagoon).
+    g.setAttribute("wet", new THREE.BufferAttribute(new Float32Array(N * N * 2), 2));
     return g;
   }, []);
+  // The photographed ground, once its textures arrive (painted colours until then).
+  const [photo, setPhoto] = useState<THREE.MeshStandardMaterial | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadGround()
+      .then((tex) => live && setPhoto(groundMaterial(tex)))
+      .catch((err) => console.warn("Keeping the painted ground:", err));
+    return () => {
+      live = false;
+    };
+  }, []);
+  useFrame(({ clock }) => {
+    groundUniforms.uTime.value = clock.elapsedTime;
+    groundUniforms.uCloud.value = env.raining ? 0.3 : env.daylight;
+    groundUniforms.uDry.value += ((dry ? 1 : 0) - groundUniforms.uDry.value) * 0.01;
+  });
   const material = useMemo(
     () =>
       detailed(
@@ -63,18 +88,30 @@ export function Terrain({
   );
 
   useLayoutEffect(() => {
-    // Per-tile colours first.
+    // Per-tile colours (or, for the photographed ground, tints) and surface weights first.
     const colors = new Float32Array(SIZE * SIZE * 3);
+    const splats = new Float32Array(SIZE * SIZE * 8);
     const c = new THREE.Color();
+    const w8 = new Float32Array(8);
+    const tint = new Float32Array(3);
     for (let i = 0; i < tiles.length; i++) {
       const t = tiles[i];
       let slope = 0;
       for (const n of around(i)) slope = Math.max(slope, Math.abs(tiles[n].h - t.h));
-      tileColor(t, c, slope);
-      colors[i * 3] = c.r;
-      colors[i * 3 + 1] = c.g;
-      colors[i * 3 + 2] = c.b;
+      if (photo) {
+        tileGround(t, slope, w8, tint);
+        splats.set(w8, i * 8);
+        colors.set(tint, i * 3);
+      } else {
+        tileColor(t, c, slope);
+        colors[i * 3] = c.r;
+        colors[i * 3 + 1] = c.g;
+        colors[i * 3 + 2] = c.b;
+      }
     }
+    const sa = geometry.attributes.splatA as THREE.BufferAttribute;
+    const wetA = geometry.attributes.wet as THREE.BufferAttribute;
+    const sb = geometry.attributes.splatB as THREE.BufferAttribute;
     const pos = geometry.attributes.position as THREE.BufferAttribute;
     const col = geometry.attributes.color as THREE.BufferAttribute;
     for (let k = 0; k < pos.count; k++) {
@@ -108,6 +145,9 @@ export function Terrain({
       let r = 0;
       let gg = 0;
       let b = 0;
+      const blend = new Float32Array(8);
+      let wetness = 0;
+      let lagoon = 0;
       for (const [dx, dz, w] of [
         [0, 0, (1 - u) * (1 - v)],
         [1, 0, u * (1 - v)],
@@ -118,19 +158,29 @@ export function Terrain({
         r += colors[i * 3] * w;
         gg += colors[i * 3 + 1] * w;
         b += colors[i * 3 + 2] * w;
+        for (let l = 0; l < 8; l++) blend[l] += splats[i * 8 + l] * w;
+        const tt = tiles[i];
+        if (tt.water === RIVER || tt.water === LAKE) wetness += w;
+        if (tt.biome === "lagoon") lagoon += w;
       }
       col.setXYZ(k, r, gg, b);
+      sa.setXYZW(k, blend[0], blend[1], blend[2], blend[3]);
+      sb.setXYZW(k, blend[4], blend[5], blend[6], blend[7]);
+      wetA.setXY(k, wetness, lagoon);
     }
     pos.needsUpdate = true;
     col.needsUpdate = true;
+    sa.needsUpdate = true;
+    sb.needsUpdate = true;
+    wetA.needsUpdate = true;
     geometry.computeVertexNormals();
     geometry.computeBoundingSphere();
-  }, [tiles, geometry]);
+  }, [tiles, geometry, photo]);
 
   return (
     <mesh
       geometry={geometry}
-      material={material}
+      material={photo ?? material}
       receiveShadow
       castShadow
       onClick={(e) => {

@@ -6,7 +6,7 @@
  */
 
 /** Tiles per side. One tile is one world unit. */
-export const SIZE = 64;
+export const SIZE = 128;
 export const HALF = SIZE / 2;
 
 export const REGIONS = [
@@ -239,7 +239,7 @@ export interface Notice {
 }
 
 export interface WorldState {
-  version: 1;
+  version: 2;
   name: string;
   seed: number;
   rng: number;

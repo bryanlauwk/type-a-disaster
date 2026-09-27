@@ -56,6 +56,10 @@ function Index() {
   const [world, setWorld] = useState<WorldState | null>(null);
   const [shared, setShared] = useState(false);
   const [paused, setPaused] = useState(false);
+  // ?paused=1 starts with the clock stopped (handy for looking at a set moment).
+  useEffect(() => {
+    if (/[?&]paused=1\b/.test(window.location.search)) setPaused(true);
+  }, []);
   const [fast, setFast] = useState(false);
   const [labels, setLabels] = useState(true);
   const [tickAt, setTickAt] = useState(() => performance.now() - 0.3 * DAY_MS);
@@ -235,6 +239,22 @@ function Index() {
     },
     [world, targetReady, armed, cast],
   );
+
+  // ?cast=<power> (or <power>:<tile>) fires a power once the island is up: for
+  // checking how an act looks without clicking through the panel.
+  const autoCast = useRef(false);
+  const castRef = useRef(cast);
+  castRef.current = cast;
+  useEffect(() => {
+    if (!world || autoCast.current) return;
+    const m = window.location.search.match(/[?&]cast=([a-z]+)(?::(\d+))?/);
+    if (!m) return;
+    autoCast.current = true;
+    const power = m[1] as Armed["power"];
+    if (!POWER_DEFS[power]) return;
+    const tile = m[2] ? Number(m[2]) : world.tribe.home;
+    setTimeout(() => castRef.current({ power }, tile), 1200);
+  }, [world]);
 
   const castWhole = useCallback(
     (a: Armed) => {

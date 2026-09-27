@@ -1,6 +1,8 @@
 /** Global lighting/weather state, written by <Sky> every frame and read by other systems. */
 export const env = {
   hour: 10,
+  /** Direction towards the sun (world space, normalised). */
+  sunDir: null as null | { x: number; y: number; z: number },
   night: false,
   raining: false,
   /** 0 at night, 1 at noon. */

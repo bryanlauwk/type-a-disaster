@@ -1,4 +1,4 @@
-import { addPop, popIn, seasonOf, type regionFacts } from "./ecology";
+import { AREA, addPop, popIn, seasonOf, type regionFacts } from "./ecology";
 import { rand, randInt } from "./rng";
 import { HERBIVORES, PREDATORS, SPECIES_DEFS, tuned } from "./species";
 import { around, geography, ring } from "./terrain";
@@ -307,7 +307,7 @@ export function tribeDay(s: WorldState, facts: ReturnType<typeof regionFacts>): 
       const def = SPECIES_DEFS[sp];
       const leap = tuned(def, s.traits[sp]).fenceLeap;
       const odds =
-        ((n * def.danger * 0.03) / (defence * (1 - leap * 0.6))) * (rr === home ? 1 : 0.4);
+        (((n / AREA) * def.danger * 0.03) / (defence * (1 - leap * 0.6))) * (rr === home ? 1 : 0.4);
       if (rand(s) < odds) {
         const lost = Math.max(1, Math.round(rand(s) * def.danger * 3));
         report.lost += lost;
