@@ -4,11 +4,9 @@ import {
   ChevronUp,
   FastForward,
   FlipVertical2,
-  Loader2,
   Pause,
   Play,
   RotateCcw,
-  Send,
   Share2,
   Tag,
 } from "lucide-react";
@@ -53,7 +51,8 @@ import type { SimClock, SpectacleRun, TileHit } from "@/components/city/CityScen
 import { hourOf } from "@/components/city/scene/common";
 import { withRealModels } from "@/components/city/scene/realModels";
 import { simulateEvent } from "@/lib/city/simulate.functions";
-import { applyModels, findModel, warmModelIndex, type FoundModel } from "@/lib/city/modelSearch";
+import { PLACES, shapeResult, type DisasterPreset, type Place } from "@/lib/city/presets";
+import { DisasterPicker } from "@/components/city/DisasterPicker";
 import {
   GRID_SIZE,
   SCALE_COST,
@@ -80,15 +79,6 @@ export const Route = createFileRoute("/")({
 });
 
 const DAY_MS = 12000;
-const SUGGESTIONS = [
-  { tag: "A strange sign", text: "The Christmas lights on Elm Street blink out a name" },
-  {
-    tag: "A close call",
-    text: "Kids on bikes follow a trail of glowing footprints into Blackpine Woods",
-  },
-  { tag: "A town mystery", text: "Every clock in Maple Hollow stops at 8:15" },
-  { tag: "A big arrival", text: "A giant waffle lands on Dot's Diner during the lunch rush" },
-];
 const C = (GRID_SIZE - 1) / 2;
 
 const compact = (n: number) => {
@@ -192,7 +182,8 @@ function Index() {
   // Looking at the Upside Down instead of the town.
   const [upsideDown, setUpsideDown] = useState(false);
   const [credits, setCredits] = useState<Credits>({ credits: MAX_CREDITS, since: 0 });
-  const [input, setInput] = useState("");
+  // The disaster being lined up, and where it's aimed.
+  const [picked, setPicked] = useState<{ preset: DisasterPreset; place: Place } | null>(null);
   const [busy, setBusy] = useState(false);
   const [busyFor, setBusyFor] = useState(0);
   const [run, setRun] = useState<SpectacleRun | null>(null);
@@ -217,7 +208,6 @@ function Index() {
   const [confirmReset, setConfirmReset] = useState(false);
   const [dismissedCollapse, setDismissedCollapse] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const promptRef = useRef<HTMLTextAreaElement>(null);
 
   // Load a shared city from the URL hash, else the saved city, else a fresh one.
   useEffect(() => {
@@ -307,22 +297,6 @@ function Index() {
     const grid = p.before.grid.map((t, i) => (p.revealed.has(i) ? p.next.grid[i] : t));
     setCity({ ...p.next, grid });
   }, []);
-  // A free model found after the spectacle started: swap it in, and credit
-  // its author on the event's front page.
-  const lateModels = useCallback((id: number, event: string, models: (FoundModel | null)[]) => {
-    if (!models.some(Boolean)) return;
-    setRun((r) => (r && r.id === id ? { ...r, actors: applyModels(r.actors, models) } : r));
-    const credit = (s: CityState): CityState => {
-      const last = s.log[s.log.length - 1];
-      if (!last || last.input !== event) return s;
-      const actors = applyModels(last.result.spectacle.actors, models);
-      const result = { ...last.result, spectacle: { ...last.result.spectacle, actors } };
-      return { ...s, log: [...s.log.slice(0, -1), { ...last, result }] };
-    };
-    const p = pending.current;
-    if (p && p.id === id) p.next = credit(p.next);
-    else setCity((c) => (c ? credit(c) : c));
-  }, []);
   const endSpectacle = useCallback((id: number) => {
     setRun((r) => (r && r.id === id ? null : r));
   }, []);
@@ -357,23 +331,21 @@ function Index() {
     history.replaceState(null, "", window.location.pathname);
   }, [shared]);
 
-  const submit = async (text: string) => {
-    const event = text.trim();
+  const submit = async (preset: DisasterPreset, place: Place) => {
+    const event = preset.text(place.phrase);
     if (!city || busy || holding) return;
-    if (event.length < 3) {
-      promptRef.current?.focus();
-      return;
-    }
+    const cost = SCALE_COST[preset.scale];
     const available = currentCredits(credits);
-    if (available.credits < 1) {
-      const mins = Math.ceil((available.since + REFILL_MS - Date.now()) / 60000);
-      toast("Out of event credits", { description: `The presses reopen in about ${mins} min.` });
+    if (available.credits < cost) {
+      const mins = Math.ceil(
+        (available.since + REFILL_MS * (cost - available.credits) - Date.now()) / 60000,
+      );
+      toast("Not enough event credits", {
+        description: `${preset.name} costs ${cost}. The presses reopen in about ${mins} min.`,
+      });
       return;
     }
     setBusy(true);
-    // The free-model index is only needed for custom actors; fetch it while
-    // the newsroom writes.
-    warmModelIndex();
     try {
       const kinds = countKinds(city.grid);
       const districts: Record<string, number> = {};
@@ -395,6 +367,7 @@ function Index() {
       const res = await simulateEvent({
         data: {
           event,
+          staged: true,
           city: {
             name: city.name,
             day: city.day,
@@ -418,18 +391,9 @@ function Index() {
         toast.error(res.error, { duration: 12000 });
         return;
       }
-      const { result, refused } = res;
-      // Free ready-made models for custom actors, looked up in the browser.
-      // Wait briefly so a model can make the entrance; slower ones swap in.
-      const lookups = Promise.all(
-        result.spectacle.actors.map((a) =>
-          a.search_terms && !a.model_url ? findModel(a.search_terms) : null,
-        ),
-      );
-      const early = refused
-        ? null
-        : await Promise.race([lookups, new Promise<null>((r) => setTimeout(() => r(null), 2000))]);
-      if (early) result.spectacle.actors = applyModels(result.spectacle.actors, early);
+      const { refused } = res;
+      // The newsroom writes the story; the disaster plays out as designed.
+      const result = refused ? res.result : shapeResult(res.result, preset, place);
       // Built-in actors are played by real, credited models where one exists.
       const phone =
         window.innerWidth < 640 ||
@@ -437,7 +401,7 @@ function Index() {
       result.spectacle.actors = withRealModels(result.spectacle.actors, phone);
       adoptShared();
       setDismissedCollapse(false);
-      setInput("");
+
       const before = cityRef.current;
       if (!before) return;
       const next = applyEvent(before, event, result);
@@ -468,6 +432,7 @@ function Index() {
         focus: { x: focus.x, z: focus.z },
         radius: focus.radius,
         heading: impact?.angle,
+        surge: impact?.surge,
         before,
         after: next,
       });
@@ -477,13 +442,6 @@ function Index() {
         if (pending.current?.id === id && !pending.current.playing) commit(id);
       }, 7000);
       setTimeout(() => commit(id), 20000);
-      if (!early) void lookups.then((models) => lateModels(id, event, models));
-      for (const a of result.spectacle.actors)
-        if (a.fresh)
-          toast.success(`New in the Maple Hollow library: ${a.label || a.model_key}`, {
-            description: "Designed on the spot by the newsroom, saved for everyone.",
-            duration: 8000,
-          });
     } catch (error) {
       console.error(error);
       toast.error("Couldn't reach the newsroom. Check your connection and try again.");
@@ -683,128 +641,26 @@ function Index() {
           </div>
         )}
 
-        {/* Event input */}
+        {/* Disaster picker */}
         <div className="absolute inset-x-0 bottom-0 z-10 p-2 sm:p-4">
-          <div className="mx-auto max-w-2xl border-2 border-ink bg-paper/95 p-2 shadow-[4px_4px_0_0_var(--ink)] backdrop-blur-md sm:p-3 sm:shadow-[5px_5px_0_0_var(--ink)]">
-            <div className="mb-2 hidden items-center justify-between gap-2 sm:flex">
-              <div>
-                <p className="font-mono text-[9px] uppercase tracking-[0.24em] text-stamp">
-                  Your dispatch · Maple Hollow, October ’85
-                </p>
-                <p className="mt-0.5 font-serif-d text-sm font-bold">What happens next?</p>
-              </div>
-              <span className="font-mono text-[9px] text-muted-foreground">{input.length}/200</span>
-            </div>
-            <form
-              className="flex items-end gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                submit(input);
-              }}
-            >
-              <textarea
-                ref={promptRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                maxLength={200}
-                disabled={busy || holding}
-                aria-label="Event"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    submit(input);
-                  }
-                }}
-                rows={2}
-                placeholder="What happens next in Maple Hollow?"
-                className="min-h-10 min-w-0 flex-1 resize-none bg-white/55 px-3 py-2 font-serif-d text-base leading-snug outline-none ring-1 ring-inset ring-ink/20 transition focus:ring-2 focus:ring-stamp placeholder:text-ink/40 disabled:opacity-60"
-              />
-              <Button
-                type="submit"
-                disabled={busy || holding || !city || input.trim().length < 3}
-                aria-label={busy ? "On deadline" : holding ? "Live" : "Make it happen"}
-                className="h-10 shrink-0 rounded-none bg-stamp px-3 text-paper shadow-[2px_2px_0_0_var(--ink)] hover:bg-stamp/90 active:translate-x-px active:translate-y-px active:shadow-none sm:px-4"
-              >
-                {busy ? <Loader2 className="animate-spin" /> : <Send />}
-                <span className="hidden sm:inline">
-                  {busy ? "On deadline…" : holding ? "Live…" : "Make it happen"}
-                </span>
-              </Button>
-            </form>
-            {busy ? (
-              <p
-                aria-live="polite"
-                className="mt-2 flex items-center gap-2 font-mono text-[10px] text-stamp"
-              >
-                <span className="inline-block size-1.5 animate-pulse rounded-full bg-stamp" />
-                {busyFor < 4
-                  ? "The newsroom is calling around…"
-                  : busyFor < 12
-                    ? "The Courier is checking the facts…"
-                    : "The presses are warming up. Maple Hollow is on the line…"}
-              </p>
-            ) : holding ? (
-              <p
-                aria-live="polite"
-                className="mt-2 font-mono text-[10px] uppercase tracking-wider text-stamp"
-              >
-                Breaking · Watch the event unfold above
-              </p>
-            ) : null}
-            <div
-              className={cn(
-                "mt-2 flex flex-nowrap items-center gap-x-3 gap-y-2 border-t border-dashed border-ink/25 pt-2 sm:flex-wrap",
-                // While an event plays on a phone, get out of the way of the view.
-                (busy || holding) && "hidden sm:flex",
-              )}
-            >
-              <div
-                className="flex items-center gap-1.5"
-                title="Event credits: minor events cost 1, citywide 2, apocalyptic 3"
-              >
-                {Array.from({ length: MAX_CREDITS }, (_, i) => (
-                  <span
-                    key={i}
-                    className={cn(
-                      "size-2.5 rotate-45 border border-ink",
-                      i < c.credits && "bg-ink",
-                    )}
-                  />
-                ))}
-                <span className="ml-1 whitespace-nowrap font-mono text-[10px] text-muted-foreground">
-                  {c.credits}/{MAX_CREDITS}
-                  <span className="hidden sm:inline"> dispatch credits</span>
-                  {c.credits < MAX_CREDITS ? ` · +1 in ${nextIn}m` : " · full"}
-                </span>
-              </div>
-              <span className="hidden font-mono text-[9px] text-muted-foreground sm:inline">
-                Need a spark?
-              </span>
-              <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto pb-0.5">
-                {SUGGESTIONS.map(({ tag, text }) => (
-                  <button
-                    key={tag}
-                    type="button"
-                    disabled={busy || holding}
-                    onClick={() => {
-                      setInput(text);
-                      promptRef.current?.focus();
-                    }}
-                    className="shrink-0 border border-ink/30 bg-white/45 px-2 py-1 text-left transition hover:border-stamp hover:bg-stamp hover:text-paper focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-stamp disabled:opacity-50"
-                  >
-                    <span className="block font-mono text-[8px] uppercase tracking-wider opacity-65">
-                      {tag}
-                    </span>
-                    <span className="block max-w-48 truncate font-serif-d text-xs">{text}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <p className="mt-1.5 hidden px-0.5 font-mono text-[9px] text-muted-foreground sm:block">
-              Be specific about where it happens. Big events can use up to 3 credits. Enter to file
-              · Shift+Enter for a new line.
-            </p>
-          </div>
+          <DisasterPicker
+            picked={picked}
+            onPick={(preset) =>
+              setPicked((cur) =>
+                cur?.preset.id === preset.id
+                  ? null
+                  : { preset, place: PLACES.find((pl) => pl.id === preset.where) ?? PLACES[0] },
+              )
+            }
+            onPlace={(place) => setPicked((cur) => (cur ? { ...cur, place } : cur))}
+            onFire={() => picked && submit(picked.preset, picked.place)}
+            credits={c.credits}
+            nextIn={nextIn}
+            busy={busy}
+            busyFor={busyFor}
+            holding={holding}
+            ready={!!city}
+          />
         </div>
       </main>
 

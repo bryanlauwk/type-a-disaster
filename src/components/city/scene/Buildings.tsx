@@ -3,7 +3,7 @@ import { useFrame, useLoader } from "@react-three/fiber";
 import * as THREE from "three";
 import type { Tile } from "@/lib/city/types";
 import { districtAt } from "@/lib/city/hollow";
-import { N, hash, tileX, tileZ } from "./common";
+import { N, hash, tileX, tileZ, type WorldBus } from "./common";
 import { gableGeometry, kitMaterial } from "./facade";
 import { houseParts, shopParts, towerParts, type KitGeo, type KitMat, type KitPart } from "./kit";
 
@@ -60,7 +60,75 @@ const TEXTURES = [
  * The town's ordinary buildings. `upside` draws the Upside Down's copy of
  * them: the same streets, drained of colour, every window dark.
  */
-export function TownBuildings({ grid, upside = false }: { grid: Tile[]; upside?: boolean }) {
+/** How a building is pushed around right now: offset and lean. */
+const push = { ox: 0, oy: 0, oz: 0, tx: 0, tz: 0 };
+const leanQ = new THREE.Quaternion();
+const leanE = new THREE.Euler();
+
+/**
+ * Forces from the bus acting on the building at a tile: the ground shaking
+ * under it, a tornado's wind pulling it in, floodwater swaying it.
+ */
+function forcesAt(bus: WorldBus, tile: number, now: number) {
+  push.ox = push.oy = push.oz = push.tx = push.tz = 0;
+  const x = tileX(tile);
+  const z = tileZ(tile);
+  const ph = tile * 1.37;
+  const q = bus.quake;
+  if (q && now < q.until) {
+    const k =
+      q.amp * Math.exp(-Math.hypot(x - q.x, z - q.z) / 7) * Math.min(1, (q.until - now) / 1.5);
+    push.ox += Math.sin(now * 29 + ph) * 0.05 * k;
+    push.oz += Math.cos(now * 23 + ph) * 0.05 * k;
+    push.tx += Math.sin(now * 19 + ph) * 0.06 * k;
+    push.tz += Math.cos(now * 21 + ph) * 0.06 * k;
+  }
+  const w = bus.wind;
+  if (w) {
+    const dx = w.x - x;
+    const dz = w.z - z;
+    const d = Math.hypot(dx, dz) || 1;
+    if (d < w.radius) {
+      // Leaning into the vortex, rattling.
+      const k = (1 - d / w.radius) * w.strength;
+      push.tx += (dz / d) * 0.24 * k + Math.sin(now * 27 + ph) * 0.05 * k;
+      push.tz += (-dx / d) * 0.24 * k + Math.cos(now * 31 + ph) * 0.05 * k;
+    }
+  }
+  const water = bus.water;
+  if (water && water.maxDepth > 0.05) {
+    const depth = water.sample(x, z);
+    if (depth > 0.06) {
+      // Shoved along by the current, rocking, settling into the mud.
+      const k = Math.min(1, depth / 0.9);
+      push.tx += water.flow.z * 0.12 * k + Math.sin(now * 2.4 + ph) * 0.04 * k;
+      push.tz += -water.flow.x * 0.12 * k + Math.cos(now * 2.1 + ph) * 0.04 * k;
+      push.oy -= 0.05 * k;
+    }
+  }
+  return push.tx !== 0 || push.tz !== 0 || push.ox !== 0 || push.oy !== 0 || push.oz !== 0;
+}
+
+/** Any force at work anywhere in town. */
+function forcesActive(bus: WorldBus | undefined, now: number) {
+  if (!bus) return false;
+  return (
+    (bus.quake !== null && now < bus.quake.until) ||
+    bus.wind !== null ||
+    (bus.water !== undefined && bus.water.maxDepth > 0.05)
+  );
+}
+
+export function TownBuildings({
+  grid,
+  upside = false,
+  bus,
+}: {
+  grid: Tile[];
+  upside?: boolean;
+  /** Forces to react to; the Upside Down's copy stays still. */
+  bus?: WorldBus;
+}) {
   const bornRef = useRef(new Map<number, { sig: string; born: number }>());
   const lots = useMemo(() => {
     const now = performance.now() / 1000;
@@ -115,12 +183,14 @@ export function TownBuildings({ grid, upside = false }: { grid: Tile[]; upside?:
   );
   const refs = useRef<Record<string, THREE.InstancedMesh | null>>({});
 
-  const write = (now: number) => {
+  const write = (now: number, clockNow = 0, forces = false) => {
     const n: Record<string, number> = {};
     for (const lot of lots) {
       const age = now - lot.born;
       const grow = age >= 0.6 ? 1 : Math.max(0.01, 1 - Math.pow(1 - Math.max(0, age) / 0.6, 3));
       tmpQ.setFromAxisAngle(UP, lot.rot);
+      const pushed = forces && bus ? forcesAt(bus, lot.tile, clockNow) : false;
+      if (pushed) tmpQ.premultiply(leanQ.setFromEuler(leanE.set(push.tx, 0, push.tz)));
       for (const p of lot.parts) {
         const key = `${p.geo}-${p.mat}`;
         const mesh = refs.current[key];
@@ -128,8 +198,9 @@ export function TownBuildings({ grid, upside = false }: { grid: Tile[]; upside?:
         const k = n[key] ?? 0;
         n[key] = k + 1;
         tmpP.set(p.pos[0], p.pos[1] * grow, p.pos[2]).applyQuaternion(tmpQ);
-        tmpP.x += tileX(lot.tile);
-        tmpP.z += tileZ(lot.tile);
+        tmpP.x += tileX(lot.tile) + (pushed ? push.ox : 0);
+        tmpP.y += pushed ? push.oy : 0;
+        tmpP.z += tileZ(lot.tile) + (pushed ? push.oz : 0);
         tmpS.set(p.size[0], p.size[1] * grow, p.size[2]);
         partQ.copy(tmpQ);
         if (p.yaw) partQ.multiply(new THREE.Quaternion().setFromAxisAngle(UP, p.yaw));
@@ -147,9 +218,14 @@ export function TownBuildings({ grid, upside = false }: { grid: Tile[]; upside?:
   };
 
   useLayoutEffect(() => write(performance.now() / 1000));
-  useFrame(() => {
+  const wasPushed = useRef(false);
+  useFrame(({ clock }) => {
     const now = performance.now() / 1000;
-    if (lots.some((l) => now - l.born < 0.65)) write(now);
+    const forces = forcesActive(bus, clock.elapsedTime);
+    // Keep writing while something is pushing, plus once more to settle.
+    if (forces || wasPushed.current || lots.some((l) => now - l.born < 0.65))
+      write(now, clock.elapsedTime, forces);
+    wasPushed.current = forces;
   });
 
   return (

@@ -154,7 +154,7 @@ export function Newspaper({ city }: { city: CityState }) {
           <div className="py-6 text-center">
             <h3 className="font-serif-d text-2xl font-bold">Nothing has happened yet</h3>
             <p className="mx-auto mt-2 max-w-xs text-sm text-ink/70">
-              Residents report a quiet, suspiciously normal October. Type an event below to give the
+              Residents report a quiet, suspiciously normal October. Pick a disaster to give the
               paper something to print.
             </p>
           </div>

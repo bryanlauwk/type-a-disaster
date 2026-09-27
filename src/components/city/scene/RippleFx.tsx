@@ -16,7 +16,12 @@ interface HitProps {
 }
 
 /** The building that stood there, leaning over, sinking and fading into its own dust. */
-function Ghost({ hit, getT, rise = false }: HitProps & { rise?: boolean }) {
+function Ghost({
+  hit,
+  getT,
+  rise = false,
+  whirl = false,
+}: HitProps & { rise?: boolean; whirl?: boolean }) {
   const outer = useRef<THREE.Group>(null);
   const inner = useRef<THREE.Group>(null);
   const mat = useRef<THREE.MeshStandardMaterial>(null);
@@ -25,9 +30,20 @@ function Ghost({ hit, getT, rise = false }: HitProps & { rise?: boolean }) {
     const since = getT() - hit.at;
     const g = inner.current;
     if (!g || !outer.current || !mat.current) return;
-    const life = rise ? 3.2 : 1.6;
+    const life = rise ? 3.2 : whirl ? 2.2 : 1.6;
     outer.current.visible = since >= 0 && since < life;
     if (!outer.current.visible) return;
+    if (whirl) {
+      // Torn off its footing and spun up into the funnel.
+      const k = since / life;
+      const r = 0.2 + k * 1.2;
+      const a = since * 7;
+      g.position.set(Math.cos(a) * r - 0.32, since * since * 1.6, Math.sin(a) * r);
+      g.rotation.set(since * 4, since * 6, since * 3);
+      g.scale.setScalar(Math.max(0.05, 1 - k * 0.8));
+      mat.current.opacity = k < 0.6 ? 1 : 1 - (k - 0.6) / 0.4;
+      return;
+    }
     if (rise) {
       // Carried up into the beam, turning slowly.
       const k = since / life;
@@ -212,6 +228,7 @@ function Explosion(p: HitProps) {
   const { hit, getT, bus, seed } = p;
   const since = () => getT() - hit.at;
   useTrigger(hit, getT, () => {
+    bus.quake = { x: hit.x, z: hit.z, amp: 0.7, until: bus.now + 1 };
     bus.shake = Math.max(bus.shake, 0.32);
     bus.flash = Math.max(bus.flash, 0.9);
     panic(bus, hit, 4, "#c62f22");
@@ -394,6 +411,13 @@ function HitFx(p: HitProps) {
       );
     case "abduct":
       return <Ghost {...p} rise />;
+    case "whirl":
+      return (
+        <>
+          <Ghost {...p} whirl />
+          <Dust {...p} />
+        </>
+      );
     case "ignite":
       return <Flare {...p} />;
     case "flood":

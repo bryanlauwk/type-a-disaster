@@ -125,7 +125,7 @@ const sharedSchema = z.object({
         input: z.string().max(200),
         result: eventResultSchema,
         // Newer events get impact physics; older ones replay as they were.
-        physics: z.literal(1).optional(),
+        physics: z.union([z.literal(1), z.literal(2)]).optional(),
       }),
     )
     .max(200),

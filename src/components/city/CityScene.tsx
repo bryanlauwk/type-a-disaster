@@ -16,6 +16,7 @@ import { Railroad } from "./scene/Railroad";
 import { Sky } from "./scene/Sky";
 import { SpectacleView, impactTime, type SpectacleRun } from "./scene/Spectacle";
 import { TileFx, landmarkLabelSpecs } from "./scene/TileFx";
+import { WaterSurface } from "./scene/WaterSurface";
 import type { TileHit } from "./scene/ripple";
 import { LabelOverlay, LabelProjector, type LabelRegistry, type LabelSpec } from "./scene/Labels";
 import { RiftLeak, UpsideDownWorld } from "./scene/UpsideDown";
@@ -393,8 +394,9 @@ function CityScene({
                   <Crossings grid={city.grid} />
                   <StreetLamps grid={city.grid} />
                   <TownProps grid={city.grid} />
-                  <TownBuildings grid={city.grid} />
+                  <TownBuildings grid={city.grid} bus={bus} />
                   <TileFx grid={city.grid} />
+                  <WaterSurface grid={city.grid} bus={bus} />
                   <Railroad grid={city.grid} bus={bus} />
                   <Life city={city} bus={bus} />
                   <RiftLeak grid={city.grid} rift={city.stats.rift} />
