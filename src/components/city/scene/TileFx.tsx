@@ -139,8 +139,7 @@ export function TileFx({ grid, upside = false }: { grid: Tile[]; upside?: boolea
   return (
     <UpsideContext.Provider value={upside}>
       {grid.map((t, i) => {
-        const special =
-          t.kind === "landmark" || t.kind === "rubble" || (!upside && (t.fire > 0 || t.flood > 0));
+        const special = t.kind === "landmark" || t.kind === "rubble" || (!upside && t.fire > 0);
         if (!special) return null;
         return (
           <group key={i} position={[tileX(i), 0, tileZ(i)]}>
@@ -153,12 +152,7 @@ export function TileFx({ grid, upside = false }: { grid: Tile[]; upside?: boolea
             )}
             {t.kind === "rubble" && <Rubble seed={i + t.builtDay} />}
             {!upside && t.fire > 0 && <Fire seed={i} y={roofHeight(t)} />}
-            {!upside && t.flood > 0 && (
-              <mesh position={[0, 0.1, 0]}>
-                <boxGeometry args={[1, 0.14, 1]} />
-                <meshStandardMaterial color="#3b8fd6" transparent opacity={0.6} />
-              </mesh>
-            )}
+            {/* Floodwater is drawn by the shared water surface. */}
           </group>
         );
       })}

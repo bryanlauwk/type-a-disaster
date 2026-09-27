@@ -702,8 +702,9 @@ function Blackout({ focus, getT, impact, bus }: ActorProps) {
 }
 
 /** A rolling fault line: shock rings race out and asphalt chunks kick upward. */
-function Earthquake({ a, focus, getT, impact, seed }: ActorProps) {
+function Earthquake({ a, focus, getT, impact, seed, bus }: ActorProps) {
   const rings = useRef<THREE.Group>(null);
+  const shook = useRef(false);
   const debris = useRef<THREE.InstancedMesh>(null);
   const chunks = useMemo(
     () =>
@@ -718,6 +719,12 @@ function Earthquake({ a, focus, getT, impact, seed }: ActorProps) {
   useFrame(() => {
     const t = getT();
     const since = t - impact;
+    // A foreshock, then the main quake shakes every building near it.
+    if (!shook.current && t >= impact * 0.6) {
+      shook.current = true;
+      bus.quake = { x: focus.x, z: focus.z, amp: 0.8 + a.size * 0.12, until: bus.now + 5.5 };
+    }
+    if (since > 0 && since < 4) bus.shake = Math.max(bus.shake, 0.06 + a.size * 0.012);
     rings.current?.children.forEach((ring, i) => {
       const age = since - i * 0.52;
       ring.visible = age >= 0 && age < 3.2;

@@ -1,4 +1,6 @@
 import { GRID_SIZE, type Tile } from "@/lib/city/types";
+import type { Surge } from "@/lib/city/surge";
+import type { WaterField } from "./water";
 
 export const N = GRID_SIZE;
 export const CENTER = (N - 1) / 2;
@@ -75,6 +77,15 @@ export interface WorldBus {
   railStopUntil: number;
   /** Clock time until which red lightning crackles over the town. */
   redStormUntil: number;
+  // --- Forces the town feels (written by actors, read by buildings and life) ---
+  /** The shared water level (owned by the water surface). */
+  water?: WaterField;
+  /** A surge of water rolling in right now. */
+  surge: Surge | null;
+  /** The ground shaking: epicentre, strength and when it stops (clock time). */
+  quake: { x: number; z: number; amp: number; until: number } | null;
+  /** A vortex of wind (a tornado), updated every frame while it lasts. */
+  wind: { x: number; z: number; radius: number; strength: number } | null;
 }
 
 export const createBus = (): WorldBus => ({
@@ -88,6 +99,9 @@ export const createBus = (): WorldBus => ({
   blackoutUntil: 0,
   railStopUntil: 0,
   redStormUntil: 0,
+  surge: null,
+  quake: null,
+  wind: null,
 });
 
 /**

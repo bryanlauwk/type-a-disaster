@@ -1,4 +1,5 @@
 import { DISTRICTS, districtAt, hollowTerrain, RAILROAD } from "./hollow";
+import { surgeCoords, surgeHalfWidth, surgeShapeFor, type SurgeShape } from "./surge";
 import {
   GRID_SIZE,
   SCALE_COST,
@@ -269,7 +270,7 @@ export function tick(prev: CityState): CityState {
 
   // A fire that reaches the gas station, the water tower or the lab sets off
   // its own chain reaction, reported in the next edition.
-  if (s.log.some((e) => e.physics === 1)) {
+  if (s.log.some((e) => (e.physics ?? 0) >= 1)) {
     for (const i of specialLandmarks(s.grid)) {
       if (s.grid[i].fire === 0) continue;
       const link = setOff(s, i, i, s.grid[i].landmark!);
@@ -722,15 +723,126 @@ const PHYSICAL = new Set<ActorKind>([
   "landslide",
   "storm",
   "ufo",
+  "flood",
+  "wildfire",
 ]);
+
+/** Kinds that only get physics from version 2 on. */
+const V2_KINDS = new Set<ActorKind>(["flood", "wildfire"]);
+
+/** The current impact physics version, recorded on each new event. */
+export const PHYSICS = 2 as const;
+
+/** Where a wildfire comes from: deep in Blackpine Woods. */
+const WOODS = { x: 6, y: 3 };
+/** How far behind the epicentre a wildfire starts, in tiles. */
+export const WILDFIRE_RUN = 8;
+
+/**
+ * The water runs along the surge's path: every tile it reaches goes under,
+ * and the crest knocks buildings down on the way (a flash flood mostly just
+ * floods). Tiles are listed in the order the water gets there.
+ */
+function surgeCollateral(
+  s: CityState,
+  d: Damage,
+  trail: number[],
+  epi: number,
+  kind: "wave" | "flood",
+  size: number,
+  scale: EventResult["scale"],
+): SurgeShape {
+  const step = SCALE_STEP[scale];
+  const lakeTile = (x: number, y: number) =>
+    s.grid[idx(x, y)].kind === "water" && districtAt(idx(x, y)).id === "mirror_lake";
+  const shape = surgeShapeFor(
+    kind === "wave" ? "tsunami" : "flash",
+    xy(epi),
+    N,
+    (x, y) => s.grid[idx(x, y)].kind === "water",
+    lakeTile,
+    size,
+    step,
+  );
+  const reached: [number, number][] = [];
+  for (let i = 0; i < s.grid.length; i++) {
+    if (s.grid[i].kind === "water") continue;
+    const { x, y } = xy(i);
+    const [along, lat] = surgeCoords(shape, x - CENTER, y - CENTER);
+    if (along < 0 || along > shape.reach + shape.runout) continue;
+    if (lat > surgeHalfWidth(shape, along)) continue;
+    // A flash flood races down the channel but only pools around the epicentre.
+    if (kind === "flood" && Math.hypot(x - xy(epi).x, y - xy(epi).y) > 2.5 + step) continue;
+    reached.push([i, along]);
+  }
+  reached.sort((a, b) => a[1] - b[1] || a[0] - b[0]);
+  const odds = kind === "wave" ? 0.45 : 0.1;
+  for (const [i, along] of reached) {
+    // Near the shore the water is still gathering speed.
+    const hard = kind === "flood" || along > shape.reach * 0.25;
+    if (hard && rand(s) < odds && wreck(d, i)) trail.push(i);
+    else if (drench(s, i)) trail.push(i);
+  }
+  return shape;
+}
+
+/**
+ * A wall of fire sweeps out of the woods towards the epicentre, setting light
+ * to trees and houses in its way. Returns its heading.
+ */
+function wildfireCollateral(
+  s: CityState,
+  d: Damage,
+  trail: number[],
+  epi: number,
+  angle: number,
+  scale: EventResult["scale"],
+): number {
+  const { x, y } = xy(epi);
+  const dx = x - WOODS.x;
+  const dy = y - WOODS.y;
+  const heading = Math.hypot(dx, dy) > 2 ? Math.atan2(dy, dx) : angle;
+  const width = 1 + SCALE_STEP[scale];
+  // Walk the line from the woods side up to just past the epicentre.
+  const spine = line(epi, heading + Math.PI, WILDFIRE_RUN, -2);
+  const seen = new Set<number>();
+  for (const c of spine) {
+    for (const i of ring(c, width)) {
+      if (seen.has(i)) continue;
+      seen.add(i);
+      const odds = cheb(i, c) === 0 ? 0.9 : 0.45;
+      if (rand(s) < odds && ignite(s, i)) {
+        trail.push(i);
+        d.hit.push(i);
+      }
+    }
+  }
+  return heading;
+}
 
 const SCALE_STEP = { minor: 0, citywide: 1, apocalyptic: 2 };
 
-function collateral(s: CityState, result: EventResult, epi: number, angle: number) {
-  const actor = result.spectacle.actors.find((a) => PHYSICAL.has(a.kind));
+function collateral(
+  s: CityState,
+  result: EventResult,
+  epi: number,
+  angle: number,
+  version: 1 | 2,
+): { trail: number[]; blast: number[]; surge?: SurgeShape; heading?: number } {
+  const actor = result.spectacle.actors.find(
+    (a) => PHYSICAL.has(a.kind) && (version >= 2 || !V2_KINDS.has(a.kind)),
+  );
   const d: Damage = { s, budget: COLLATERAL_BUDGET[result.scale], hit: [] };
   const trail: number[] = [];
   if (!actor) return { trail, blast: d.hit };
+  if (version >= 2 && (actor.kind === "wave" || actor.kind === "flood")) {
+    const surge = surgeCollateral(s, d, trail, epi, actor.kind, actor.size, result.scale);
+    return { trail, blast: d.hit, surge, heading: Math.atan2(surge.dz, surge.dx) };
+  }
+  if (actor.kind === "wildfire") {
+    const heading = wildfireCollateral(s, d, trail, epi, angle, result.scale);
+    return { trail, blast: d.hit, heading };
+  }
   const step = SCALE_STEP[result.scale];
   const big = actor.size >= 5 ? 1 : 0;
 
@@ -780,7 +892,7 @@ function collateral(s: CityState, result: EventResult, epi: number, angle: numbe
       break;
     }
     case "wave": {
-      // The surge rolls in from the west and floods a band of streets.
+      // (Version 1) The surge rolls in from the west and floods a band of streets.
       const { x, y } = xy(epi);
       const half = step;
       const back = [3, 6, 8][step];
@@ -999,10 +1111,16 @@ function chainReactions(s: CityState, before: Tile[], damaged: number[]): ChainL
 }
 
 /** Adds the physical consequences of an event and returns where it hit. */
-function applyPhysics(s: CityState, before: Tile[], result: EventResult): ImpactInfo {
+function applyPhysics(
+  s: CityState,
+  before: Tile[],
+  result: EventResult,
+  version: 1 | 2,
+): ImpactInfo {
   const tile = findEpicentre(before, s, result);
-  const angle = rand(s) * Math.PI * 2;
-  const { trail, blast } = collateral(s, result, tile, angle);
+  let angle = rand(s) * Math.PI * 2;
+  const { trail, blast, surge, heading } = collateral(s, result, tile, angle, version);
+  if (heading !== undefined) angle = heading;
   const damaged: number[] = [];
   for (let i = 0; i < before.length; i++) {
     const a = before[i];
@@ -1013,7 +1131,7 @@ function applyPhysics(s: CityState, before: Tile[], result: EventResult): Impact
   // Nearest the epicentre first, so reactions spread outwards.
   damaged.sort((a, b) => cheb(a, tile) - cheb(b, tile) || a - b);
   const chain = chainReactions(s, before, damaged);
-  return { tile, angle, trail, blast, chain };
+  return surge ? { tile, angle, trail, blast, chain, surge } : { tile, angle, trail, blast, chain };
 }
 
 const SUPERNATURAL_RIFT_BONUS = { minor: 1, citywide: 3, apocalyptic: 8 };
@@ -1022,8 +1140,8 @@ export function applyEvent(
   prev: CityState,
   input: string,
   result: EventResult,
-  /** Impact physics and chain reactions; off only when replaying older events. */
-  physics = true,
+  /** Impact physics version; lower only when replaying older events. */
+  physics: 0 | 1 | 2 = PHYSICS,
 ): CityState {
   const s = cloneState(prev);
   const st = s.stats;
@@ -1032,7 +1150,7 @@ export function applyEvent(
   // has already identified a positive rift effect.
   if (result.stat_changes.rift > 0) st.rift += SUPERNATURAL_RIFT_BONUS[result.scale];
   for (const op of result.tile_ops.slice(0, 6)) applyOp(s, op);
-  const impact = physics ? applyPhysics(s, prev.grid, result) : undefined;
+  const impact = physics ? applyPhysics(s, prev.grid, result, physics) : undefined;
   if (result.ongoing) {
     s.ongoing.push({
       label: result.ongoing.label,
@@ -1049,7 +1167,7 @@ export function applyEvent(
   }
   clampStats(st);
   s.log.push(
-    physics ? { day: s.day, input, result, physics: 1, impact } : { day: s.day, input, result },
+    physics ? { day: s.day, input, result, physics, impact } : { day: s.day, input, result },
   );
   // An event can revive a collapsed city (e.g. "a thousand settlers arrive").
   const c = countKinds(s.grid);
@@ -1074,7 +1192,7 @@ export function replay(seed: number, log: EventRecord[], finalDay: number): City
   let s = createCity(seed);
   for (const ev of log) {
     while (s.day < ev.day && !s.collapsed) s = tick(s);
-    s = applyEvent(s, ev.input, ev.result, ev.physics === 1);
+    s = applyEvent(s, ev.input, ev.result, ev.physics ?? 0);
   }
   while (s.day < finalDay && !s.collapsed) s = tick(s);
   return s;

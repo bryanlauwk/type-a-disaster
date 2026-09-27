@@ -37,9 +37,11 @@ export const simulateEvent = createServerFn({ method: "POST" })
     const { runNewsroom, NewsroomError } = await import("./newsroom.server");
     try {
       const { libraryIndex, resolveCustomActors } = await import("./actorLibrary.server");
-      const { result, refused } = await runNewsroom(data, await libraryIndex());
+      // Stock disasters bring their own actors: skip the shared model library.
+      const { result, refused } = await runNewsroom(data, data.staged ? [] : await libraryIndex());
       // Custom actors get their shared recipe, or save Claude's new one (optional Supabase).
-      result.spectacle.actors = await resolveCustomActors(result.spectacle.actors, ip);
+      if (!data.staged)
+        result.spectacle.actors = await resolveCustomActors(result.spectacle.actors, ip);
       return { ok: true, result, refused };
     } catch (error) {
       if (error instanceof NewsroomError) return { ok: false, error: error.message };

@@ -476,5 +476,7 @@ export type CitySummary = z.infer<typeof citySummarySchema>;
 export const simulateInputSchema = z.object({
   event: z.string().trim().min(3).max(200),
   city: citySummarySchema,
+  /** The event is a stock disaster whose spectacle is already choreographed. */
+  staged: z.boolean().optional(),
 });
 export type SimulateInput = z.infer<typeof simulateInputSchema>;

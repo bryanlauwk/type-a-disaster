@@ -1,5 +1,7 @@
 import { GRID_SIZE, type Actor, type ChainKind, type CityState, type Tile } from "@/lib/city/types";
 import { AFTERMATH } from "./actorParts";
+import { surgeArrival, surgeCoords } from "@/lib/city/surge";
+import { wildfireArrival } from "./Wildfire";
 
 const N = GRID_SIZE;
 const C = (N - 1) / 2;
@@ -11,6 +13,7 @@ export type HitFx =
   | "flood"
   | "rise"
   | "abduct"
+  | "whirl"
   | "crater"
   | Exclude<ChainKind, "topple">;
 
@@ -118,17 +121,40 @@ export function planHits(
   }
   if (!impact) return [...hits.values()].sort((p, q) => p.at - q.at);
 
+  // Blasts throw buildings outwards; holes in the ground pull them in.
+  const inward = actors.some((a) => a.kind === "sinkhole" || a.kind === "landslide");
+  for (const i of impact.blast) {
+    const h = hits.get(i);
+    if (!h || (h.x === ex && h.z === ez)) continue;
+    h.fall = Math.atan2(h.z - ez, h.x - ex) + (inward ? Math.PI : 0);
+  }
+
   // A traveller wrecks its trail as it reaches each tile.
-  const traveller = actors.find(
-    (a) => a.kind === "kaiju" || a.kind === "tornado" || a.kind === "wave",
+  const traveller = actors.find((a) =>
+    ["kaiju", "tornado", "wave", "flood", "wildfire"].includes(a.kind),
   );
-  if (traveller) {
+  if (impact.surge) {
+    // Each tile goes under the moment the water front reaches it.
+    const shape = impact.surge;
+    for (const i of impact.trail) {
+      const [along] = surgeCoords(shape, tx(i), tz(i));
+      if (hits.has(i)) put(i, surgeArrival(shape, along));
+    }
+  } else if (traveller?.kind === "wildfire") {
+    const dirX = Math.cos(impact.angle);
+    const dirZ = Math.sin(impact.angle);
+    for (const i of impact.trail) {
+      const off = (tx(i) - ex) * dirX + (tz(i) - ez) * dirZ;
+      if (hits.has(i)) put(i, wildfireArrival(off));
+    }
+  } else if (traveller) {
     const dirX = Math.cos(impact.angle);
     const dirZ = Math.sin(impact.angle);
     for (const i of impact.trail) {
       const off = (tx(i) - ex) * dirX + (tz(i) - ez) * dirZ;
       const at = travelTime(traveller.kind, off, impactT, tx(i) - ex);
-      if (at !== null && hits.has(i)) put(i, at);
+      if (at !== null && hits.has(i))
+        put(i, at, traveller.kind === "tornado" ? "whirl" : undefined);
     }
   }
 

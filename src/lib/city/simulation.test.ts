@@ -109,7 +109,7 @@ describe("city simulation", () => {
         ],
         followups: [],
       },
-      false,
+      0,
     );
     const burning = next.grid.map((t, i) => (t.fire > 0 ? i : -1)).filter((i) => i >= 0);
     expect(burning.length).toBe(4);
@@ -129,7 +129,7 @@ describe("city simulation", () => {
         followups: [],
         ongoing: null,
       },
-      false,
+      0,
     );
     const onRow = (i: number) => Math.abs(Math.floor(i / 32) - RAILROAD.row) <= 1;
     const wrecked = s.grid.map((t, i) => (t.kind === "rubble" ? i : -1)).filter((i) => i >= 0);
@@ -171,7 +171,7 @@ describe("city simulation", () => {
         followups: [],
         ongoing: null,
       },
-      false,
+      0,
     );
     expect(parks(next) - parks(s)).toBe(3);
     // Landmarks aimed at a full district replace ordinary buildings, never icons.
@@ -193,7 +193,7 @@ describe("city simulation", () => {
         followups: [],
         ongoing: null,
       },
-      false,
+      0,
     );
     const whale = withWhale.grid.findIndex((t) => t.landmark?.name === "Beached whale");
     expect(inElm(whale)).toBe(true);
@@ -214,7 +214,7 @@ describe("city simulation", () => {
         followups: [],
         ongoing: null,
       },
-      false,
+      0,
     );
     const flooded = next.grid.map((t, i) => [t, i] as const).filter(([t]) => t.flood > 0);
     expect(flooded.length).toBe(6);

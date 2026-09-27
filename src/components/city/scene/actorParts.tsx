@@ -2,6 +2,8 @@ import { useMemo, useRef } from "react";
 import { useFrame, useLoader } from "@react-three/fiber";
 import * as THREE from "three";
 import type { Actor, ActorShape } from "@/lib/city/types";
+import type { SurgeShape } from "@/lib/city/surge";
+import type { TileHit } from "./ripple";
 import { hash, type WorldBus } from "./common";
 import { textureProps } from "./textures";
 
@@ -17,6 +19,10 @@ export interface ActorProps {
   seed: number;
   /** Heading in radians for travellers, matching the trail the sim wrecked. */
   heading?: number;
+  /** The water's path, for a tsunami or flash flood. */
+  surge?: SurgeShape;
+  /** Every tile the event changes and when, so actors can act on them. */
+  hits?: TileHit[];
 }
 
 export const ease = (x: number) => Math.min(1, Math.max(0, x));
@@ -178,6 +184,8 @@ export function Stomper({
     if (walking && step !== lastStep.current) {
       lastStep.current = step;
       bus.shake = Math.max(bus.shake, 0.03 * s);
+      // Buildings near each footfall rattle.
+      bus.quake = { x: g.position.x, z: g.position.z, amp: 0.35 * s, until: bus.now + 0.35 };
     }
     g.userData.t = t;
   });

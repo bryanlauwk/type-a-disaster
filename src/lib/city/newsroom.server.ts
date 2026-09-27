@@ -105,7 +105,11 @@ Recent headlines: ${city.recentHeadlines.length ? city.recentHeadlines.map((h) =
 Shared library of custom models (key: name): ${library.length ? library.map((e) => `${e.key}: ${e.name}`).join("; ") : "empty so far"}
 
 The visitor typed this event:
-<event>${event}</event>`;
+<event>${event}</event>${
+    input.staged
+      ? "\n\nThis is one of the town's stock disasters and its 3D spectacle is already choreographed: return an empty actors list (crowd and responders are ignored too). Put your effort into the tile_ops, stats, followups and the story."
+      : ""
+  }`;
 
   const base = {
     model: serverEnv("CITY_MODEL") || DEFAULT_MODEL,

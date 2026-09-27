@@ -1,6 +1,6 @@
 # Type-a-Disaster: Maple Hollow
 
-Maple Hollow, October 1985: a sleepy small town with a lab on the hill that nobody talks about, and something underneath. You type what happens to it ("a gate tears open under the lab", "the Christmas lights on Elm Street start blinking"). Claude decides the consequences and choreographs what you see: the gate rips open in a red glow, vines creep out across the lawns, the lab's black vans roll in, kids on bikes pedal out to investigate, and the chain reaction keeps unfolding over the next few days. _The Maple Hollow Courier_ reports all of it with a straight face, while the kids on channel 9 know better.
+Maple Hollow, October 1985: a sleepy small town with a lab on the hill that nobody talks about, and something underneath. You pick one of fifteen disasters (a tsunami out of Mirror Lake, a kaiju, a wildfire out of Blackpine Woods, a gate to the Upside Down…) and where it hits. Claude decides the consequences and writes the story, and the town plays it out: the gate rips open in a red glow, vines creep out across the lawns, the lab's black vans roll in, kids on bikes pedal out to investigate, and the chain reaction keeps unfolding over the next few days. _The Maple Hollow Courier_ reports all of it with a straight face, while the kids on channel 9 know better.
 
 Everything in Maple Hollow is original. It's a Goosebumps-spooky homage to 1980s small-town mysteries: no names, characters or creatures from existing shows.
 
@@ -32,8 +32,9 @@ Beneath the town hangs its mirror (`scene/UpsideDown.tsx`): the same streets and
 ## How it plays
 
 - **The town grows on its own.** One day passes every 12 seconds, or 3 seconds on fast-forward. Happy, solvent districts build new houses, shops and brick blocks in their own character: family homes on Elm Street and Oak Hill, storefronts on Main Street, trailers in Pine Acres, sheds and annexes at the lab. The woods and Mirror Lake are protected; nothing is built on the railroad.
-- **You type events.** Claude returns map effects (destroy, burn, flood, build, landmark, clear; aimed at a district, the railroad or an area), a spectacle (actors, how the crowd reacts, who responds), and up to three follow-ups that arrive as bulletins on later days.
+- **You pick a disaster and a place.** Each of the fifteen has a hand-tuned actor and cost. Claude returns map effects (destroy, burn, flood, build, landmark, clear; aimed at a district, the railroad or an area), a spectacle (actors, how the crowd reacts, who responds), and up to three follow-ups that arrive as bulletins on later days.
 - **Town memory shapes the next event.** The newsroom sees active fires, floods, rubble, lingering effects and already scheduled bulletins, so a new event can react to what is already happening. Ordinary events leave the Rift alone; only a supernatural event can widen it.
+- **Disasters push the town around.** Actors write into shared forces that the whole town reads: one water level (tsunamis and flash floods surge along a path from the lake or creek, floods pool and drain over days, buildings sway and wreckage floats), ground shaking (quakes, impacts and kaiju footsteps rattle nearby buildings) and wind (a tornado pulls buildings toward it and spins wreckage up into the funnel). Damage lands tile by tile as it's reached, and chain reactions follow: the gas station explodes, the water tower bursts, the radio mast falls and blacks out the town.
 - **Hazards move through the map.** Fires spread through adjacent buildings and woods faster in polluted, low-green or high-Rift conditions. Flooding can spill into nearby tiles, with green cover slowing it and water edges speeding it up.
 - **The actor & effect library** (`scene/ActorLibrary.tsx` and `scene/Spectacle.tsx`):
   - **The Upside Down:** a gate that tears open in mid-air, vines that grow over the ground and up the houses, a spore storm, and a colossal shadow that rises over the horizon in a red storm.
@@ -57,7 +58,7 @@ Events need an Anthropic API key, which stays on the server (a TanStack Start se
 3. If the key is an organization-level key that isn't scoped to a workspace, also add an `ANTHROPIC_WORKSPACE_ID` secret. The workspace ID is under Console → Settings → Workspaces. Alternatively, create the key inside a workspace.
 4. Optional: set `CITY_MODEL` to use a different Claude model. The default is `claude-opus-5-5`, run at low effort.
 
-Without a key the game still runs, but typed events show a "newsroom is closed" message.
+Without a key the game still runs, but events show a "newsroom is closed" message.
 
 ## New actors on demand (free, no keys)
 
@@ -95,6 +96,8 @@ The surface images are in `public/textures`. The town's brick, clapboard and shi
 | ------------------------------------- | ------------------------------------------------------------------------------------------- |
 | `src/lib/city/hollow.ts`              | The town map: districts, streets, lake and creek, railroad, landmarks                       |
 | `src/lib/city/simulation.ts`          | Deterministic sim: growth, sprawl, redevelopment, events, chain reactions, replay           |
+| `src/lib/city/presets.ts`             | The fifteen stock disasters: actors, cost, default place, the dispatch sent to the newsroom |
+| `src/lib/city/surge.ts`               | Tsunami and flash-flood timeline, shared by the sim, the water and the tile timing          |
 | `src/lib/city/schema.ts`              | Zod validation and clamping of event results, plus the JSON schema sent to Claude           |
 | `src/lib/city/newsroom.server.ts`     | Server-only Claude call (structured output, refusal fallback)                               |
 | `src/lib/city/simulate.functions.ts`  | Server function the page calls for events, with a per-IP throttle                           |

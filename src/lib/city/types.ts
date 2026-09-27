@@ -1,3 +1,5 @@
+import type { SurgeShape } from "./surge";
+
 export const GRID_SIZE = 32;
 
 export type TileKind =
@@ -162,6 +164,8 @@ export const ACTOR_KINDS = [
   "convoy",
   "rain_of",
   "wave",
+  "flood",
+  "wildfire",
   "storm",
   "fireworks",
   "hot_air_balloon",
@@ -303,14 +307,19 @@ export interface ImpactInfo {
   /** Tiles the blast, quake or storm damaged around the epicentre. */
   blast: number[];
   chain: ChainLink[];
+  /** The water's path, for a tsunami or flash flood. */
+  surge?: SurgeShape;
 }
 
 export interface EventRecord {
   day: number;
   input: string;
   result: EventResult;
-  /** 1 = the event gets impact physics and chain reactions (newer events). */
-  physics?: 1;
+  /**
+   * Which version of impact physics the event was played with, so a replay
+   * matches: absent = none, 1 = first version, 2 = water surges and wildfires.
+   */
+  physics?: 1 | 2;
   /** Filled in by the engine; not saved. */
   impact?: ImpactInfo;
 }

@@ -31,6 +31,9 @@ import { REAL_MODELS, type RealModel } from "./realModels";
 import { withSpecGloss } from "./specGloss";
 import { Puffs } from "./vfx";
 import { RippleFx } from "./RippleFx";
+import { SurgeActor } from "./SurgeActor";
+import { Wildfire, WILDFIRE_IMPACT } from "./Wildfire";
+import { SURGE_IMPACT, type SurgeShape } from "@/lib/city/surge";
 import { planHits, type TileHit } from "./ripple";
 
 export { AFTERMATH };
@@ -43,6 +46,8 @@ export interface SpectacleRun {
   radius: number;
   /** Heading of travellers, shared with the simulation's trail. */
   heading?: number;
+  /** The water's path for a tsunami or flash flood. */
+  surge?: SurgeShape;
   /** The town before and after the event, to play the damage tile by tile. */
   before?: CityState;
   after?: CityState;
@@ -61,7 +66,9 @@ const IMPACT_AT: Record<ActorKind, number> = {
   swarm: 3.0,
   convoy: 3.2,
   rain_of: 1.8,
-  wave: 2.5,
+  wave: SURGE_IMPACT.tsunami,
+  flood: SURGE_IMPACT.flash,
+  wildfire: WILDFIRE_IMPACT,
   storm: 2.2,
   fireworks: 1.2,
   earthquake: LIBRARY_IMPACT.earthquake,
@@ -613,7 +620,10 @@ function Creature(p: ActorProps) {
 // UFO, tornado, wave, storm
 // ---------------------------------------------------------------------------
 
-function Ufo({ a, focus, getT, impact }: ActorProps) {
+function Ufo({ a, focus: epicentre, getT, impact, hits }: ActorProps) {
+  // Hover right over the house it takes.
+  const taken = hits?.find((h) => h.fx === "abduct");
+  const focus = taken ? { x: taken.x, z: taken.z } : epicentre;
   const ref = useRef<THREE.Group>(null);
   const beam = useRef<THREE.Mesh>(null);
   const lights = useRef<THREE.Group>(null);
@@ -688,7 +698,14 @@ function Ufo({ a, focus, getT, impact }: ActorProps) {
   );
 }
 
-function Tornado({ a, focus, getT, impact, seed, heading }: ActorProps) {
+function Tornado({ a, focus, getT, impact, seed, heading, bus }: ActorProps) {
+  // The wind pulls on every building near the funnel.
+  useEffect(
+    () => () => {
+      bus.wind = null;
+    },
+    [bus],
+  );
   const ref = useRef<THREE.Group>(null);
   const funnel = useRef<THREE.Mesh>(null);
   const debris = useRef<THREE.InstancedMesh>(null);
@@ -731,6 +748,9 @@ function Tornado({ a, focus, getT, impact, seed, heading }: ActorProps) {
     const off = 12 - (24 * t) / (impact * 2);
     g.position.set(focus.x + dir.x * off, 0, focus.z + dir.z * off);
     g.visible = t < total;
+    bus.wind = g.visible
+      ? { x: g.position.x, z: g.position.z, radius: 2.5 + s * 1.5, strength: 0.6 + a.size * 0.08 }
+      : null;
     if (funnel.current) funnel.current.rotation.y = t * 1.8;
     const m = debris.current;
     if (m) {
@@ -768,91 +788,13 @@ function Tornado({ a, focus, getT, impact, seed, heading }: ActorProps) {
   );
 }
 
-function Wave({ a, focus, getT, impact }: ActorProps) {
-  const ref = useRef<THREE.Group>(null);
-  const h = 0.3 + a.size * 0.18;
-  const waterMap = useSurfaceMap("/textures/whale-skin.webp");
-  const { waveGeometry, foamGeometry } = useMemo(() => {
-    const profile = new THREE.Shape();
-    profile.moveTo(-0.9, 0);
-    profile.lineTo(0.9, 0);
-    profile.lineTo(0.94, h * 0.58);
-    profile.bezierCurveTo(1.04, h * 0.82, 0.9, h * 1.08, 0.55, h * 0.96);
-    profile.bezierCurveTo(0.3, h * 0.9, 0.25, h * 0.73, -0.08, h * 0.61);
-    profile.lineTo(-0.9, 0);
-    const solid = new THREE.ExtrudeGeometry(profile, {
-      depth: 34,
-      bevelEnabled: true,
-      bevelSegments: 3,
-      bevelSize: 0.045,
-      bevelThickness: 0.05,
-      curveSegments: 20,
-    });
-    solid.translate(0, 0, -17);
-    const crest = new THREE.CatmullRomCurve3(
-      Array.from({ length: 18 }, (_, i) => {
-        const z = -16 + (32 * i) / 17;
-        return new THREE.Vector3(
-          0.89 + Math.sin(i * 0.71) * 0.045,
-          h * (0.64 + Math.sin(i * 0.9) * 0.12),
-          z,
-        );
-      }),
-    );
-    return {
-      waveGeometry: solid,
-      foamGeometry: new THREE.TubeGeometry(crest, 70, 0.045, 8, false),
-    };
-  }, [h]);
-  const waveMap = useMemo(() => {
-    const texture = waterMap.clone();
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(1, 2);
-    texture.needsUpdate = true;
-    return texture;
-  }, [waterMap]);
-  useFrame(() => {
-    const g = ref.current;
-    if (!g) return;
-    const t = getT();
-    const x = focus.x - 18 + (18 * t) / impact;
-    g.position.set(x, 0, focus.z);
-    g.visible = x < 20;
-    g.scale.y = 1 + Math.sin(t * 5) * 0.08;
-  });
-  return (
-    <group ref={ref}>
-      <mesh geometry={waveGeometry} castShadow>
-        <meshPhysicalMaterial
-          map={waveMap}
-          color={a.color}
-          roughness={0.22}
-          metalness={0.12}
-          clearcoat={0.9}
-          clearcoatRoughness={0.14}
-          transparent
-          opacity={0.86}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-      <mesh geometry={foamGeometry}>
-        <meshStandardMaterial
-          color="#eff8f5"
-          roughness={0.38}
-          emissive="#a6dfe3"
-          emissiveIntensity={0.14}
-        />
-      </mesh>
-    </group>
-  );
-}
-
-function Storm({ focus, getT, impact, bus, seed }: ActorProps) {
+function Storm({ focus, getT, impact, bus, seed, hits }: ActorProps) {
   const clouds = useRef<THREE.Group>(null);
   const bolt = useRef<THREE.Group>(null);
   const nextBolt = useRef(0);
+  // Lightning lands exactly where (and when) the buildings catch fire.
+  const strikes = useMemo(() => (hits ?? []).filter((h) => h.fx === "ignite"), [hits]);
+  const struck = useRef(0);
   useEffect(() => {
     bus.stormUntil = bus.now + impact + AFTERMATH + 4;
   }, [bus, impact]);
@@ -866,7 +808,16 @@ function Storm({ focus, getT, impact, bus, seed }: ActorProps) {
     });
     const b = bolt.current;
     if (!b) return;
-    if (t > impact - 0.4 && t > nextBolt.current) {
+    const aimed = strikes[struck.current];
+    if (aimed && t >= aimed.at - 0.05) {
+      struck.current += 1;
+      b.position.set(aimed.x, 0, aimed.z);
+      b.userData.until = t + 0.22;
+      bus.flash = 1;
+      bus.shake = Math.max(bus.shake, 0.08);
+      bus.quake = { x: aimed.x, z: aimed.z, amp: 0.3, until: bus.now + 0.4 };
+      nextBolt.current = t + 0.4;
+    } else if (t > impact - 0.4 && t > nextBolt.current) {
       const strike = Math.round(t * 10);
       nextBolt.current = t + 0.5 + detail(seed, strike, 97) * 0.8;
       b.position.set(
@@ -1460,7 +1411,6 @@ const HITS_GROUND = new Set<ActorKind>([
   "giant_object",
   "kaiju",
   "creature",
-  "wave",
   "tornado",
   "rift",
   "earthquake",
@@ -1485,7 +1435,10 @@ function proceduralActor(p: ActorProps, radius: number): React.ReactNode {
     case "tornado":
       return <Tornado {...p} />;
     case "wave":
-      return <Wave {...p} />;
+    case "flood":
+      return <SurgeActor {...p} />;
+    case "wildfire":
+      return <Wildfire {...p} />;
     case "storm":
       return <Storm {...p} />;
     case "swarm":
@@ -1608,6 +1561,8 @@ export function SpectacleView({
     if (!fired.current && t >= impact) {
       fired.current = true;
       const big = primary ? primary.size : 2;
+      if (primary && HITS_GROUND.has(primary.kind) && primary.kind !== "earthquake")
+        bus.quake = { x: run.focus.x, z: run.focus.z, amp: 0.4 + big * 0.08, until: bus.now + 1.2 };
       bus.shake = Math.max(
         bus.shake,
         primary && HITS_GROUND.has(primary.kind) ? 0.08 + big * 0.04 : 0.05,
@@ -1671,6 +1626,8 @@ export function SpectacleView({
               bus,
               seed: run.id * 31 + i,
               heading: run.heading,
+              surge: run.surge,
+              hits,
             }}
             radius={run.radius}
           />
