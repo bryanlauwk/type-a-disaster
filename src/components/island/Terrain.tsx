@@ -76,6 +76,7 @@ export function Terrain({
   }, []);
   useFrame(({ clock }) => {
     groundUniforms.uTime.value = clock.elapsedTime;
+    groundUniforms.uBlue.value = env.blueprint;
     groundUniforms.uCloud.value = env.raining ? 0.3 : env.daylight;
     groundUniforms.uDry.value += ((dry ? 1 : 0) - groundUniforms.uDry.value) * 0.01;
   });

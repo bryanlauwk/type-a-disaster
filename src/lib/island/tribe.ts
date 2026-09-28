@@ -3,6 +3,7 @@ import { rand, randInt } from "./rng";
 import { HERBIVORES, PREDATORS, SPECIES_DEFS, tuned } from "./species";
 import { around, geography, ring } from "./terrain";
 import {
+  RESTRICTED,
   SEA,
   SPECIES,
   TECHS,
@@ -96,6 +97,7 @@ function spotFor(s: WorldState, kind: StructureKind): number | null {
   for (const i of ring(home, r + 1)) {
     if (!buildable(s, i)) continue;
     if (s.sanctuaries.includes(s.tiles[i].region)) continue;
+    if (RESTRICTED.includes(s.tiles[i].region)) continue;
     const t = s.tiles[i];
     const d = dist(i, home);
     let score = -d;
@@ -265,6 +267,7 @@ export function tribeDay(s: WorldState, facts: ReturnType<typeof regionFacts>): 
   for (const i of ring(tr.home, r + 2)) {
     const t = s.tiles[i];
     if (t.forest < 0.1 || t.water || s.sanctuaries.includes(t.region)) continue;
+    if (RESTRICTED.includes(t.region)) continue;
     gather += t.veg * 0.05 + t.forest * 0.04;
     const cut = Math.min(t.forest, 0.012 * (1 + tr.stage));
     t.forest -= cut;

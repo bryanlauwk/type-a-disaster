@@ -178,12 +178,39 @@ export function loadGround(): Promise<GroundTextures> {
   return loading;
 }
 
+const BLUE = /* glsl */ `
+// --- The park map: a dark-blue survey with contour lines and a grid. -----
+if (uBlue > 0.001) {
+  float hk = vGroundPos.y * 2.0;
+  float cl = abs(fract(hk + 0.5) - 0.5) / max(fwidth(hk), 1e-4);
+  float contour = 1.0 - clamp(cl, 0.0, 1.0);
+  float hk5 = vGroundPos.y * 0.4;
+  float cl5 = abs(fract(hk5 + 0.5) - 0.5) / max(fwidth(hk5), 1e-4);
+  float major = 1.0 - clamp(cl5 * 0.6, 0.0, 1.0);
+  vec2 gq = vGroundPos.xz / 8.0;
+  vec2 gd = abs(fract(gq + 0.5) - 0.5) / max(fwidth(gq), vec2(1e-4));
+  float grid = 1.0 - clamp(min(gd.x, gd.y), 0.0, 1.0);
+  float lam = max(dot(normalize(vGroundNormal), normalize(vec3(-0.5, 0.8, -0.35))), 0.0);
+  vec3 bp = vec3(0.025, 0.07, 0.14) * (0.5 + 0.7 * lam) + vec3(0.0, 0.015, 0.03) * clamp(vGroundPos.y * 0.15, 0.0, 1.0);
+  // Forest as a fine stipple.
+  float stip = step(0.86, gh(floor(vGroundPos.xz * 3.0))) * smoothstep(0.4, 0.8, vSplatA.y);
+  bp += vec3(0.02, 0.07, 0.1) * stip;
+  bp += vec3(0.1, 0.42, 0.62) * contour * 0.16 + vec3(0.2, 0.6, 0.8) * major * 0.3;
+  bp += vec3(0.08, 0.28, 0.42) * grid * 0.25;
+  // Rivers and lakes: dark water with a bright bank.
+  bp = mix(bp, vec3(0.01, 0.04, 0.09), waterMask);
+  bp += vec3(0.25, 0.7, 0.9) * waterMask * (1.0 - waterMask) * 1.6;
+  gl_FragColor.rgb = mix(gl_FragColor.rgb, bp, uBlue);
+}
+`;
+
 export const groundUniforms = {
   uAlbedo: { value: null as THREE.DataArrayTexture | null },
   uNormal: { value: null as THREE.DataArrayTexture | null },
   uTime: { value: 0 },
   uDry: { value: 0 },
   uCloud: { value: 1 },
+  uBlue: { value: 0 },
 };
 
 /** Turns a standard material into the photographed ground. */
@@ -225,6 +252,7 @@ uniform sampler2DArray uNormal;
 uniform float uTime;
 uniform float uDry;
 uniform float uCloud;
+uniform float uBlue;
 varying vec4 vSplatA;
 varying vec4 vSplatB;
 varying vec2 vWet;
@@ -317,6 +345,11 @@ roughnessFactor = groundRough;`,
         "#include <metalnessmap_fragment>",
         `#include <metalnessmap_fragment>
 metalnessFactor = waterMask * 0.15;`,
+      )
+      .replace(
+        "#include <dithering_fragment>",
+        `#include <dithering_fragment>
+${BLUE}`,
       )
       .replace(
         "#include <normal_fragment_maps>",

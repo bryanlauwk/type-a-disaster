@@ -57,7 +57,7 @@ export function PhotoSky() {
       (env.raining ? 0.2 : 1) *
       (env.hazy ? 0.35 : 1) *
       (env.upside ? 0 : 1 - Math.min(0.7, env.rift / 120));
-    material.opacity = show;
+    material.opacity = show * (1 - env.blueprint);
     // Warmer towards sunset; brighter in a lightning flash.
     const warm = env.dusk * 0.35;
     const lift = 1.05 + env.flash * 0.8;

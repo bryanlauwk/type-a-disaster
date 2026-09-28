@@ -15,6 +15,8 @@ export const env = {
   /** A big fire lighting the land (an erupting crater): strength and where. */
   actLight: 0,
   actLightPos: [0, 0, 0] as [number, number, number],
+  /** 0 = the island as it is; 1 = the park-map view (dark blue, contour lines, zones). */
+  blueprint: 0,
   /** Looking at the Upside Down rather than the town. */
   upside: false,
   /** 0–100: how far the Upside Down has broken through. */

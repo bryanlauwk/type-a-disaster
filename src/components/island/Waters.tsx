@@ -126,6 +126,7 @@ uniform vec3 uShallow;
 uniform vec3 uSky;
 uniform vec3 uHorizon;
 uniform sampler2D uRipples;
+uniform float uBlue;
 varying vec3 vWorld;
 varying vec3 vNormalW;
 varying float vCrest;
@@ -174,6 +175,18 @@ void main() {
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <fog_fragment>
+  if (uBlue > 0.001) {
+    // The park map: navy sea, a bright coastline, depth rings and the grid.
+    vec2 gq = q / 8.0;
+    vec2 gd = abs(fract(gq + 0.5) - 0.5) / max(fwidth(gq), vec2(1e-4));
+    float grid = 1.0 - clamp(min(gd.x, gd.y), 0.0, 1.0);
+    float dk = depth * 1.2;
+    float ring = (1.0 - clamp(abs(fract(dk + 0.5) - 0.5) / max(fwidth(dk), 1e-4), 0.0, 1.0)) * (1.0 - smoothstep(1.0, 4.0, depth));
+    float coast = 1.0 - smoothstep(0.0, 0.35, depth);
+    vec3 bp = vec3(0.01, 0.035, 0.08) + vec3(0.05, 0.18, 0.28) * grid * 0.35 + vec3(0.1, 0.4, 0.55) * ring * 0.3;
+    bp = mix(bp, vec3(0.45, 0.9, 1.0), coast * 0.8);
+    gl_FragColor = vec4(mix(gl_FragColor.rgb, bp, uBlue), mix(gl_FragColor.a, 1.0, uBlue));
+  }
 }`;
 
 /** Island heights as a texture, so the sea knows how deep it is. */
@@ -224,6 +237,7 @@ export function Sea({ tiles }: { tiles: Tile[] }) {
             uDraw: { value: new THREE.Vector4(0, 0, 20, 0) },
             uOuter: { value: 0 },
             uNearHalf: { value: NEAR / 2 },
+            uBlue: { value: 0 },
           },
         ]),
         transparent: true,
@@ -255,6 +269,7 @@ export function Sea({ tiles }: { tiles: Tile[] }) {
     u.uHeight.value = heights;
     u.uRipples.value = waterNormalMap();
     u.uDraw.value.set(seaFx.drawX, seaFx.drawZ, seaFx.drawR, seaFx.draw);
+    u.uBlue.value = env.blueprint;
     // The sky it reflects follows the real sky.
     const bg = scene.background as THREE.Color | null;
     if (bg && (bg as THREE.Color).isColor) {
