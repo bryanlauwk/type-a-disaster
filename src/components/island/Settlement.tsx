@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { hash } from "@/lib/island/rng";
@@ -18,6 +18,10 @@ import { heightAt } from "./palette";
 import { lifeBus } from "./Dinos";
 import { env } from "./fx/env";
 import { Puffs } from "./fx/vfx";
+import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
+
+/** Buildings are drawn this much bigger than their sketch, so people fit them. */
+const BUILD_SCALE = 1.7;
 
 type Geo = "box" | "cyl" | "cone" | "sphere" | "torus";
 interface KitPart {
@@ -254,6 +258,7 @@ const e = new THREE.Euler();
 const pv = new THREE.Vector3();
 const sv = new THREE.Vector3();
 const cc = new THREE.Color();
+const v3 = new THREE.Vector3();
 const CAP = 2600;
 
 export function Structures({ world }: { world: WorldState }) {
@@ -299,7 +304,12 @@ export function Structures({ world }: { world: WorldState }) {
           ? 0
           : (hash(i, 2) - 0.5) * 0.3;
       q.setFromEuler(e.set(0, face, 0));
-      base.compose(pv.set(x + ox, y, z + oz), q, sv.set(1, grow, 1));
+      // Buildings at a size people fit (fields, fences and walkways fill their tile).
+      const big =
+        t.build === "farm" || t.build === "fence" || t.build === "walkway" || t.build === "dock"
+          ? 1
+          : BUILD_SCALE;
+      base.compose(pv.set(x + ox, y, z + oz), q, sv.set(big, grow * big, big));
       for (const part of kit(t.build, i, tiles, dry)) {
         const mesh = refs.current[part.geo];
         if (!mesh) continue;
@@ -403,9 +413,21 @@ interface Person {
   phase: number;
   fleeing: number;
   shade: number;
+  yaw: number;
+  /** What the body is doing: clip, time in it, and the clip it's fading from. */
+  clip: ClipName;
+  clipT: number;
+  prev: ClipName;
+  prevT: number;
+  fade: number;
+  /** Children are smaller; everyone a little different. */
+  size: number;
 }
 
 const SKIN = ["#8a5a3a", "#a4704a", "#6f4428", "#b98458"];
+/** How tall a grown person stands (world units; a tile is about five metres). */
+const PERSON_H = 0.2;
+const PEOPLE_CAP = 120;
 const CLOTH = ["#9a7a4a", "#6f5a3a", "#b5452d", "#c9ad7e"];
 
 /** The tribe going about its day, and running for the huts when something comes. */
@@ -442,6 +464,13 @@ export function People({ world }: { world: WorldState }) {
         phase: 0,
         fleeing: 0,
         shade: hash(id, 3),
+        yaw: hash(id, 4) * Math.PI * 2,
+        clip: "idle",
+        clipT: hash(id, 5) * 3,
+        prev: "idle",
+        prevT: 0,
+        fade: 0,
+        size: hash(id, 6) < 0.18 ? 0.62 + hash(id, 7) * 0.12 : 0.9 + hash(id, 7) * 0.18,
       });
     }
     list.length = want;
@@ -451,6 +480,37 @@ export function People({ world }: { world: WorldState }) {
   const head = useRef<THREE.InstancedMesh>(null);
   const spear = useRef<THREE.InstancedMesh>(null);
   const canoe = useRef<THREE.InstancedMesh>(null);
+  // The real figure, once it has loaded (the sketch stands in until then).
+  const [skin, setSkin] = useState<Skin | null>(null);
+  const skinRef = useRef<Skin | null>(null);
+  skinRef.current = skin;
+  useEffect(() => {
+    let live = true;
+    loadSkin("person")
+      .then((s) => live && setSkin(s))
+      .catch((err) => console.warn("Keeping the sketched people:", err));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const personAttrs = useMemo(() => {
+    const attr = (n: number) =>
+      new THREE.InstancedBufferAttribute(new Float32Array(PEOPLE_CAP * n), n).setUsage(
+        THREE.DynamicDrawUsage,
+      );
+    return { a: attr(3), b: attr(3), f: attr(1), l: attr(4), l2: attr(4) };
+  }, []);
+  const personGeo = useMemo(() => {
+    if (!skin) return null;
+    const g = skin.geometry.clone();
+    g.setAttribute("aAnimA", personAttrs.a);
+    g.setAttribute("aAnimB", personAttrs.b);
+    g.setAttribute("aFade", personAttrs.f);
+    g.setAttribute("aLook", personAttrs.l);
+    g.setAttribute("aLook2", personAttrs.l2);
+    return g;
+  }, [skin, personAttrs]);
+  const personMesh = useRef<THREE.InstancedMesh>(null);
 
   useFrame(({ clock }, rawDt) => {
     const dt = Math.min(rawDt, 0.05);
@@ -462,6 +522,7 @@ export function People({ world }: { world: WorldState }) {
     let nb = 0;
     let ns = 0;
     let nc = 0;
+    let np = 0;
     for (const p of people.current) {
       // Danger first: anything with teeth close by sends everyone running home.
       for (const h of lifeBus.hunters) {
@@ -545,20 +606,88 @@ export function People({ world }: { world: WorldState }) {
       const dx = p.tx - p.x;
       const dz = p.tz - p.z;
       const d = Math.hypot(dx, dz);
-      const speed = p.fleeing > 0 ? 1.1 : 0.35;
+      const running = p.fleeing > 0;
+      // Walking about 1.4 m/s, running about 4 (a tile is ~5 m), smaller for children.
+      const speed = (running ? 0.75 : 0.28) * (0.8 + p.size * 0.2);
       const moving = d > 0.05;
       if (moving) {
-        const step = Math.min(d, speed * dt);
-        p.x += (dx / d) * step;
-        p.z += (dz / d) * step;
+        // Turn towards the way you're going, then walk that way.
+        let turn = Math.atan2(dx, dz) - p.yaw;
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        p.yaw += turn * Math.min(1, dt * 7);
+        const step = Math.min(
+          d,
+          speed * dt * Math.max(0.2, Math.cos(Math.min(1.4, Math.abs(turn)))),
+        );
+        p.x += Math.sin(p.yaw) * step;
+        p.z += Math.cos(p.yaw) * step;
+      } else if (p.task === "fire" || p.task === "home") {
+        // Face the fire or the hut.
+        const hx = wx(home) - p.x;
+        const hz = wz(home) - p.z;
+        if (Math.hypot(hx, hz) > 0.1) {
+          let turn = Math.atan2(hx, hz) - p.yaw;
+          turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+          p.yaw += turn * Math.min(1, dt * 2);
+        }
+      }
+      // The body: walk or run to match the ground covered, bend to work, stand.
+      const skin = skinRef.current;
+      if (skin) {
+        const want: ClipName = moving
+          ? running
+            ? "run"
+            : "walk"
+          : p.task === "farm" || p.task === "gather"
+            ? "graze"
+            : "idle";
+        if (want !== p.clip) {
+          p.prev = p.clip;
+          p.prevT = p.clipT;
+          p.fade = 1;
+          p.clip = want;
+          p.clipT = hash(p.id, 11) * 2;
+        }
+        const meta = skin.meta.clips[p.clip];
+        let rate = 1;
+        if (meta && moving) {
+          const h = PERSON_H * p.size;
+          // Stride of about 0.8 of standing height per step, two steps a cycle.
+          const perCycle = h * (running ? 2.2 : 1.5);
+          rate = Math.min(1.8, Math.max(0.6, (speed / perCycle) * meta.dur));
+        }
+        p.clipT += dt * rate;
+        if (p.fade > 0) {
+          p.prevT += dt;
+          p.fade = Math.max(0, p.fade - dt / 0.25);
+        }
       }
       p.phase += dt * (moving ? 14 : 2);
       const ground = heightAt(w.tiles, p.x, p.z);
       const onSea = p.task === "fish" && d < 0.3 && ground < 0.05;
-      const y = Math.max(ground, 0) + (moving ? Math.abs(Math.sin(p.phase)) * 0.012 : 0);
-      const lean = p.task === "farm" && !moving ? 0.5 : 0;
-      q.setFromEuler(e.set(lean, Math.atan2(dx, dz), 0));
-      if (body.current && nb < 120) {
+      const y = Math.max(ground, 0) + (skin ? 0 : moving ? Math.abs(Math.sin(p.phase)) * 0.012 : 0);
+      const lean = !skin && p.task === "farm" && !moving ? 0.5 : 0;
+      q.setFromEuler(e.set(lean, p.yaw, 0));
+      const person = personMesh.current;
+      if (skin && person && np < PEOPLE_CAP) {
+        const k = (PERSON_H * p.size) / skin.meta.height;
+        m.compose(pv.set(p.x, y, p.z), q, sv.set(k, k, k));
+        person.setMatrixAt(np, m);
+        cc.setScalar(0.85 + p.shade * 0.3);
+        person.setColorAt(np, cc);
+        const at = personAttrs;
+        const ca = skin.meta.clips[p.clip] ?? skin.meta.clips.idle!;
+        clipRows(ca, p.clipT, v3);
+        at.a.setXYZ(np, v3.x, v3.y, v3.z);
+        const cb = skin.meta.clips[p.prev] ?? ca;
+        clipRows(cb, p.prevT, v3);
+        at.b.setXYZ(np, v3.x, v3.y, v3.z);
+        at.f.setX(np, p.fade);
+        // Skin tones and hide colours vary from person to person.
+        at.l.setXYZW(np, (p.shade - 0.5) * 0.35, 0.85 + hash(p.id, 12) * 0.35, 0, 0);
+        at.l2.setXYZW(np, 0, hash(p.id, 13), 0, 0.85 + hash(p.id, 14) * 0.25);
+        np++;
+      } else if (!skin && body.current && nb < 120) {
         m.compose(pv.set(p.x, y + 0.035, p.z), q, sv.set(0.035, 0.07, 0.03));
         body.current.setMatrixAt(nb, m);
         body.current.setColorAt(nb, cc.set(CLOTH[p.id % CLOTH.length]));
@@ -570,10 +699,17 @@ export function People({ world }: { world: WorldState }) {
         nb++;
       }
       if (spear.current && (p.task === "hunt" || p.task === "patrol") && ns < 60) {
+        // Carried upright in the right hand.
+        const h = skin ? PERSON_H * p.size : 0.1;
+        const side = 0.22 * h;
         m.compose(
-          pv.set(p.x + 0.02, y + 0.07, p.z),
-          q.setFromEuler(e.set(0.2, 0, 0.1)),
-          sv.set(0.006, 0.16, 0.006),
+          pv.set(
+            p.x + Math.cos(p.yaw) * -side + Math.sin(p.yaw) * 0.08 * h,
+            y + h * 0.55,
+            p.z - Math.sin(p.yaw) * -side + Math.cos(p.yaw) * 0.08 * h,
+          ),
+          q.setFromEuler(e.set(0.15, p.yaw, 0)),
+          sv.set(0.012 * h * 5, h * 1.25, 0.012 * h * 5),
         );
         spear.current.setMatrixAt(ns++, m);
       }
@@ -584,6 +720,17 @@ export function People({ world }: { world: WorldState }) {
           sv.set(0.06, 0.03, 0.28),
         );
         canoe.current.setMatrixAt(nc++, m);
+      }
+    }
+    const pm = personMesh.current;
+    if (pm) {
+      pm.count = np;
+      pm.instanceMatrix.needsUpdate = true;
+      if (pm.instanceColor) pm.instanceColor.needsUpdate = true;
+      for (const attr of Object.values(personAttrs)) {
+        attr.clearUpdateRanges();
+        attr.addUpdateRange(0, np * attr.itemSize);
+        attr.needsUpdate = true;
       }
     }
     for (const [mesh, n] of [
@@ -601,6 +748,23 @@ export function People({ world }: { world: WorldState }) {
 
   return (
     <group>
+      {skin && personGeo && (
+        <instancedMesh
+          ref={(r) => {
+            personMesh.current = r;
+            if (r && !r.userData.ready) {
+              r.userData.ready = true;
+              r.setColorAt(0, cc.set("#ffffff"));
+              r.count = 0;
+              r.customDepthMaterial = skin.depth;
+            }
+          }}
+          args={[personGeo, skin.materials, PEOPLE_CAP]}
+          castShadow
+          receiveShadow
+          frustumCulled={false}
+        />
+      )}
       <instancedMesh ref={body} args={[undefined, undefined, 120]} frustumCulled={false} castShadow>
         <capsuleGeometry args={[0.5, 0.6, 2, 6]} />
         <meshStandardMaterial roughness={0.9} />

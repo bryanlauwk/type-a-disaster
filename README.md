@@ -68,6 +68,7 @@ The dinosaurs are real 3D models, all CC BY 4.0 via Sketchfab (from the Objavers
 - Raptors: "Velociraptor With Fixed Colour" by dinomaster
 - Skywings: "Pteranodon (with Fixed Colour)" by dinomaster
 - Second looks: "Triceratops occultatum" by Miguelangelo Rosario (Styracosaurus), "Dryosauro the isle" by Dodogamer (Dryosaurus), "Animated Tyrannosaurus Rex Dinosaur Running Loop" by LasquetiSpice (striped tyrant), "Velociraptor 1+motions" and "Pteranodon+motions" by Kapi777 (dark raptors, grey pteranodons)
+- The tribe: "Neanderthal" by gb.prof.69 (CC BY 4.0), with walk, run and work motions built for the island
 - Leviathans: "mosasaurus" by Epic_devolepment
 
 Plants are real models too, photographed from 16 angles into impostor atlases (`public/plants`, `src/components/island/impostors.ts`): Poly Haven's CC0 fir, fir sapling, island tree, fern, shrub, pachira and dead-trunk scans, plus CC BY 4.0 models from Sketchfab: "Ponga" (tree fern) by toAflame, "Realistic Palm Tree Model vol.1" by aliyeredon, "Bald Cypress" by BaptisteBerard and "Jungle Tree" by kobaltsecond6c7d6150917a4267.

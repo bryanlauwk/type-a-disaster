@@ -480,5 +480,33 @@
     },
     "height": 0.413,
     "width": 3.146
+  },
+  "person": {
+    "bones": 77,
+    "rows": 99,
+    "clips": {
+      "idle": {
+        "row": 0,
+        "frames": 45,
+        "dur": 3
+      },
+      "walk": {
+        "row": 45,
+        "frames": 17,
+        "dur": 1.1
+      },
+      "run": {
+        "row": 62,
+        "frames": 10,
+        "dur": 0.66
+      },
+      "graze": {
+        "row": 72,
+        "frames": 27,
+        "dur": 1.8
+      }
+    },
+    "height": 1.038,
+    "width": 0.402
   }
 }

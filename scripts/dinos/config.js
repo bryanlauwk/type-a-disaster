@@ -275,4 +275,67 @@ export const CONFIG = {
       swim: { src: "SwimmingBiting", fps: 12 },
     },
   },
+
+  // --- The tribe ---------------------------------------------------------------
+  person: {
+    // A Neanderthal-style hunter in a hide loincloth. Walk, run and work are
+    // built from its standing pose.
+    file: "f7a0890f",
+    ref: "Temp",
+    clips: {
+      idle: {
+        base: "Temp",
+        at: 0,
+        dur: 3,
+        mods: [
+          { bones: /^lowerarm_[lr]/, axis: "x", amp: 0, offset: 0.9 },
+          { bones: /^spine_02/, axis: "x", amp: 0.02, freq: 1, phase: 0 },
+          { bones: /^head/, axis: "y", amp: 0.15, freq: 1, phase: 1 },
+        ],
+      },
+      walk: {
+        base: "Temp",
+        at: 0,
+        dur: 1.1,
+        mods: [
+          { bones: /^thigh_l/, axis: "x", amp: 0.15, freq: 1, phase: 0 },
+          { bones: /^thigh_r/, axis: "x", amp: 0.15, freq: 1, phase: PI },
+          { bones: /^calf_l/, axis: "x", amp: -0.12, freq: 1, phase: PI / 2, offset: -0.12 },
+          { bones: /^calf_r/, axis: "x", amp: -0.12, freq: 1, phase: PI * 1.5, offset: -0.12 },
+          { bones: /^lowerarm_[lr]/, axis: "x", amp: 0, offset: 0.8 },
+          { bones: /^upperarm_l/, axis: "x", amp: 0.12, freq: 1, phase: PI },
+          { bones: /^upperarm_r/, axis: "x", amp: 0.12, freq: 1, phase: 0 },
+          { bones: /^spine_02/, axis: "y", amp: 0.06, freq: 1, phase: 0 },
+        ],
+      },
+      run: {
+        base: "Temp",
+        at: 0,
+        dur: 0.66,
+        mods: [
+          { bones: /^thigh_l/, axis: "x", amp: 0.28, freq: 1, phase: 0, offset: 0.04 },
+          { bones: /^thigh_r/, axis: "x", amp: 0.28, freq: 1, phase: PI, offset: 0.04 },
+          { bones: /^calf_l/, axis: "x", amp: -0.22, freq: 1, phase: PI / 2, offset: -0.24 },
+          { bones: /^calf_r/, axis: "x", amp: -0.22, freq: 1, phase: PI * 1.5, offset: -0.24 },
+          { bones: /^upperarm_l/, axis: "x", amp: 0.25, freq: 1, phase: PI },
+          { bones: /^upperarm_r/, axis: "x", amp: 0.25, freq: 1, phase: 0 },
+          { bones: /^lowerarm_[lr]/, axis: "x", amp: 0, offset: 0.3 },
+          { bones: /^spine_01/, axis: "x", amp: 0.03, freq: 2, offset: -0.15 },
+        ],
+      },
+      graze: {
+        // Bent over at work: digging, gathering, planting.
+        base: "Temp",
+        at: 0,
+        dur: 1.8,
+        mods: [
+          { bones: /^spine_01/, axis: "x", amp: 0.05, freq: 2, offset: -0.45 },
+          { bones: /^thigh_[lr]/, axis: "x", amp: 0, offset: -0.2 },
+          { bones: /^calf_[lr]/, axis: "x", amp: 0, offset: 0.35 },
+          { bones: /^lowerarm_[lr]/, axis: "x", amp: 0, offset: 0.5 },
+          { bones: /^upperarm_[lr]/, axis: "x", amp: 0.3, freq: 2, offset: 0.3 },
+        ],
+      },
+    },
+  },
 };

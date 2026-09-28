@@ -36,11 +36,15 @@ const clipBy = (s) => {
 };
 const bonesByName = [];
 gltf.scene.traverse(o => { if (o.isBone || o.type === 'Bone' || o.isObject3D) bonesByName.push(o); });
+// Rest rotations: bones a clip doesn't animate would otherwise keep the last
+// frame's synthesised turn and pile it up frame after frame.
+const rest = new Map(bonesByName.map(o => [o, o.quaternion.clone()]));
 
 const _pq = new THREE.Quaternion(), _qw = new THREE.Quaternion(), _d = new THREE.Quaternion();
 const AX = { x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1) };
 function pose(spec, t) {
   mixer.stopAllAction();
+  for (const [o, q] of rest) o.quaternion.copy(q);
   if (spec.src) {
     const a = mixer.clipAction(clipBy(spec.src)); a.reset().play();
     mixer.setTime(t * (spec.speed || 1));
