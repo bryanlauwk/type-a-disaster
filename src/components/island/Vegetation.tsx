@@ -209,8 +209,13 @@ export function Vegetation({ tiles, dry }: { tiles: Tile[]; dry: boolean }) {
     }
   }, [plants, tiles, dry, looks]);
 
+  // The park map leaves the trees off (forest shows as stipple on the ground).
+  const group = useRef<THREE.Group>(null);
+  useFrame(() => {
+    if (group.current) group.current.visible = env.blueprint < 0.5;
+  });
   return (
-    <group>
+    <group ref={group}>
       {KINDS.map((k) => {
         const look = looks[LOOK[k].atlas];
         if (!look) return null;

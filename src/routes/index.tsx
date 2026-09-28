@@ -1,6 +1,15 @@
 import { ClientOnly, createFileRoute } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronUp, FastForward, Pause, Play, RotateCcw, Share2, Tag } from "lucide-react";
+import {
+  ChevronUp,
+  FastForward,
+  Map as MapIcon,
+  Pause,
+  Play,
+  RotateCcw,
+  Share2,
+  Tag,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/sonner";
@@ -62,6 +71,11 @@ function Index() {
   }, []);
   const [fast, setFast] = useState(false);
   const [labels, setLabels] = useState(true);
+  const [mapView, setMapView] = useState(false);
+  // ?map=1 opens on the park map (handy for checking it).
+  useEffect(() => {
+    if (/[?&]map=1\b/.test(window.location.search)) setMapView(true);
+  }, []);
   const [tickAt, setTickAt] = useState(() => performance.now() - 0.3 * DAY_MS);
   const [group, setGroup] = useState<PowerGroup>("wrath");
   const [armed, setArmed] = useState<Armed | null>(null);
@@ -327,6 +341,7 @@ function Index() {
                   reveal={reveal}
                   onReveal={onReveal}
                   onActDone={onActDone}
+                  mapView={mapView && !run}
                 />
               ) : (
                 <SceneFallback />
@@ -383,6 +398,9 @@ function Index() {
           </IconButton>
           <IconButton on={labels} onClick={() => setLabels((l) => !l)} label="Place names">
             <Tag />
+          </IconButton>
+          <IconButton on={mapView} onClick={() => setMapView((m) => !m)} label="Park map">
+            <MapIcon />
           </IconButton>
           <IconButton onClick={share} label="Share island">
             <Share2 />

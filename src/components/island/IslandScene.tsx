@@ -27,6 +27,8 @@ import { heightAt } from "./palette";
 import { PhotoSky } from "./fx/PhotoSky";
 import { eruptBus } from "./Eruption";
 import { FORMS } from "./dinoForms";
+import { Zones, restrictedMarker } from "./Zones";
+import { env } from "./fx/env";
 import { PostFX } from "./fx/PostFX";
 import { LabelOverlay, LabelProjector, type LabelRegistry, type LabelSpec } from "./fx/Labels";
 
@@ -65,6 +67,63 @@ export interface IslandSceneProps {
   reveal?: TileReveal[];
   onReveal?: (tiles: number[]) => void;
   onActDone?: () => void;
+  /** Show the island as the park map: dark blue, contours, glowing zones. */
+  mapView?: boolean;
+}
+
+/**
+ * Fades the park map in and out, and flies the camera up to take in the
+ * whole island (and back to where it was) when it's switched.
+ */
+function MapMode({ on }: { on: boolean }) {
+  const controls = useThree((s) => s.controls) as unknown as {
+    target: THREE.Vector3;
+    update: () => void;
+  } | null;
+  const camera = useThree((s) => s.camera);
+  const saved = useRef<{ p: THREE.Vector3; t: THREE.Vector3 } | null>(null);
+  const fly = useRef<{
+    k: number;
+    fromP: THREE.Vector3;
+    fromT: THREE.Vector3;
+    toP: THREE.Vector3;
+    toT: THREE.Vector3;
+  } | null>(null);
+  useEffect(() => {
+    if (!controls) return;
+    if (on) {
+      saved.current = { p: camera.position.clone(), t: controls.target.clone() };
+      fly.current = {
+        k: 0,
+        fromP: camera.position.clone(),
+        fromT: controls.target.clone(),
+        toP: new THREE.Vector3(0, 185, 88),
+        toT: new THREE.Vector3(0, 0, -2),
+      };
+    } else if (saved.current) {
+      fly.current = {
+        k: 0,
+        fromP: camera.position.clone(),
+        fromT: controls.target.clone(),
+        toP: saved.current.p,
+        toT: saved.current.t,
+      };
+      saved.current = null;
+    }
+  }, [on, controls]); // eslint-disable-line react-hooks/exhaustive-deps
+  useFrame((_, dt) => {
+    env.blueprint += ((on ? 1 : 0) - env.blueprint) * Math.min(1, dt * 2.5);
+    if (Math.abs(env.blueprint - (on ? 1 : 0)) < 0.002) env.blueprint = on ? 1 : 0;
+    const f = fly.current;
+    if (!f || !controls) return;
+    f.k = Math.min(1, f.k + dt / 1.4);
+    const e = f.k * f.k * (3 - 2 * f.k);
+    camera.position.lerpVectors(f.fromP, f.toP, e);
+    controls.target.lerpVectors(f.fromT, f.toT, e);
+    controls.update();
+    if (f.k >= 1) fly.current = null;
+  });
+  return null;
 }
 
 /** Keeps the camera over the island. */
@@ -160,6 +219,7 @@ function IslandScene({
   reveal,
   onReveal,
   onActDone,
+  mapView = false,
 }: IslandSceneProps) {
   const small = typeof window !== "undefined" && window.innerWidth < 640;
   const [fx, setFx] = useState(
@@ -244,6 +304,15 @@ function IslandScene({
         far: 60,
       });
     });
+    const warn = restrictedMarker(world.tiles);
+    if (warn)
+      out.push({
+        key: "restricted",
+        ...warn,
+        text: "⚠ Restricted area",
+        variant: "landmark",
+        far: 90,
+      });
     return out;
     // Landmarks don't move.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -284,6 +353,7 @@ function IslandScene({
           <People world={world} />
           <Dinos world={world} getPhase={getPhase} />
           <TileFires tiles={world.tiles} />
+          <Zones tiles={world.tiles} show={showLabels} />
           <ActLight />
           {act && reveal && (
             <ActSpectacle
@@ -311,6 +381,7 @@ function IslandScene({
           target={[0, 0, -6]}
         />
         <CameraBounds />
+        <MapMode on={mapView} />
         <LabelProjector specs={baseLabels} registry={registry} />
         {fx && <PostFX />}
         {fx && watchFps && (
@@ -322,6 +393,26 @@ function IslandScene({
         )}
       </Canvas>
       <LabelOverlay specs={baseLabels} registry={registry} show={showLabels} />
+      {mapView && (
+        <div className="pointer-events-none absolute left-3 top-24 z-10 w-52 border border-[#6fe3ff]/40 bg-[#030a16]/80 p-2.5 font-mono text-[10px] uppercase tracking-[0.18em] text-[#9fefff] shadow-[0_0_24px_rgba(111,227,255,0.15)] sm:top-24">
+          <p className="text-[11px] text-[#d8fbff]">Primordia · park map</p>
+          <p className="mt-0.5 text-[#6fe3ff]/60">Survey grid 8 × 8 · contours 0.5</p>
+          <ul className="mt-2 space-y-1 normal-case tracking-normal">
+            <li className="flex items-center gap-2">
+              <span className="inline-block w-6 border-t-2 border-dashed border-[#6fe3ff]" />
+              Zone border
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="inline-block w-6 border-t-2 border-[#ff5a3c]" />
+              Restricted: no settling
+            </li>
+            <li className="flex items-center gap-2">
+              <span className="inline-block w-6 border-t border-[#6fe3ff]/50" />
+              Coast and contours
+            </li>
+          </ul>
+        </div>
+      )}
     </div>
   );
 }

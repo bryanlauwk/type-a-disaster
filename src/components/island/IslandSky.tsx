@@ -8,6 +8,7 @@ const DAY = new THREE.Color("#b8d6e8");
 const DUSK = new THREE.Color("#f0a266");
 const NIGHT = new THREE.Color("#15223c");
 const RAIN = new THREE.Color("#7f8c93");
+const NAVY = new THREE.Color("#030a16");
 const ASH = new THREE.Color("#8a7563");
 const DRY = new THREE.Color("#d8c9a2");
 const WHITE = new THREE.Color("#ffffff");
@@ -156,6 +157,7 @@ export function IslandSky({
     if (w.drought) target.lerp(DRY, 0.35 * daylight);
     if (w.ash) target.lerp(ASH, 0.6);
     if (flash > 0) target.lerp(WHITE, flash * 0.5);
+    if (env.blueprint > 0) target.lerp(NAVY, env.blueprint);
     sky.lerp(target, Math.min(1, dt * 3));
     scene.background = sky;
     gl.toneMappingExposure +=
@@ -168,6 +170,9 @@ export function IslandSky({
       // Haze starts past what you're looking at and thickens towards the horizon.
       fog.near = camDist * (w.ash ? 0.3 : raining ? 0.6 : 0.95);
       fog.far = fog.near + (w.ash ? 60 : raining ? 110 : 230) + camDist * 1.2;
+      // The park map is a clear survey: no haze.
+      fog.near += env.blueprint * 400;
+      fog.far += env.blueprint * 600;
     }
 
     // The sun crosses from east to west over the island.

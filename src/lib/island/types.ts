@@ -25,6 +25,9 @@ export const REGIONS = [
 ] as const;
 export type RegionId = (typeof REGIONS)[number];
 
+/** The wild north: the volcano and Predator Ridge. Fenced off; the tribe never settles or gathers there. */
+export const RESTRICTED: readonly RegionId[] = ["predator_ridge", "volcano"];
+
 export const BIOMES = [
   "sea",
   "shallows",
