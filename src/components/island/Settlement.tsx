@@ -6,6 +6,7 @@ import { seasonOf } from "@/lib/island/sim";
 import { around } from "@/lib/island/terrain";
 import {
   SEA,
+  SIZE,
   tx,
   ty,
   wx,
@@ -19,6 +20,7 @@ import { lifeBus } from "./Dinos";
 import { env } from "./fx/env";
 import { Puffs } from "./fx/vfx";
 import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
+import { seaHeightAt } from "./Waters";
 
 /** Buildings are drawn this much bigger than their sketch, so people fit them. */
 const BUILD_SCALE = 1.7;
@@ -68,14 +70,61 @@ function kit(kind: StructureKind, i: number, tiles: Tile[], dry: boolean): KitPa
           };
         }),
       ];
-    case "dock":
-      return [
-        { geo: "box", p: [0, 0.05, 0.35], s: [0.14, 0.025, 0.75], color: WOOD },
-        { geo: "cyl", p: [0.07, 0.0, 0.6], s: [0.025, 0.2, 0.025], color: DARK_WOOD },
-        { geo: "cyl", p: [-0.07, 0.0, 0.6], s: [0.025, 0.2, 0.025], color: DARK_WOOD },
-        { geo: "sphere", p: [0.16, 0.02, 0.55], s: [0.07, 0.04, 0.34], color: "#6b4a2a" },
-        { geo: "box", p: [-0.2, 0.08, 0.05], s: [0.2, 0.12, 0.02], color: HIDE },
-      ];
+    case "dock": {
+      // A pier of lashed planks on driven posts, running from the beach out
+      // over the water, with a rack of fish drying on the shore.
+      const deck = DOCK_DECK - tiles[i].h;
+      const parts: KitPart[] = [];
+      for (let k = 0; k < 11; k++) {
+        const z = 0.15 + (k * (DOCK_LEN - 0.15)) / 10;
+        parts.push({
+          geo: "box",
+          p: [(hash(i, k, 21) - 0.5) * 0.02, deck + (hash(i, k, 22) - 0.5) * 0.01, z],
+          s: [0.3 + (hash(i, k, 23) - 0.5) * 0.04, 0.022, 0.15],
+          r: [0, (hash(i, k, 24) - 0.5) * 0.08, 0],
+          color: k % 3 ? WOOD : DARK_WOOD,
+        });
+      }
+      for (const sx of [-1, 1])
+        parts.push({
+          geo: "box",
+          p: [sx * 0.11, deck - 0.03, DOCK_LEN / 2 + 0.1],
+          s: [0.035, 0.035, DOCK_LEN - 0.1],
+          color: DARK_WOOD,
+        });
+      for (let k = 1; k <= 4; k++)
+        for (const sx of [-1, 1])
+          parts.push({
+            geo: "cyl",
+            p: [sx * 0.15, deck - 0.45, (k / 4) * DOCK_LEN],
+            s: [0.035, 1.0, 0.035],
+            r: [(hash(i, k * 3 + sx, 25) - 0.5) * 0.08, 0, (hash(i, k * 3 + sx, 26) - 0.5) * 0.08],
+            color: DARK_WOOD,
+          });
+      // Drying rack on the beach.
+      for (const sx of [-1, 1])
+        parts.push({
+          geo: "cyl",
+          p: [0.45 + sx * 0.14, 0.1, -0.15],
+          s: [0.02, 0.2, 0.02],
+          color: DARK_WOOD,
+        });
+      parts.push({
+        geo: "cyl",
+        p: [0.45, 0.19, -0.15],
+        s: [0.015, 0.3, 0.015],
+        r: [0, 0, Math.PI / 2],
+        color: WOOD,
+      });
+      for (let k = 0; k < 4; k++)
+        parts.push({
+          geo: "box",
+          p: [0.34 + k * 0.07, 0.14, -0.15],
+          s: [0.02, 0.09, 0.035],
+          color: k % 2 ? "#8a8f86" : "#a39a84",
+        });
+      return parts;
+    }
     case "lookout":
       return [
         ...[-1, 1].flatMap((sx) =>
@@ -223,11 +272,30 @@ function kit(kind: StructureKind, i: number, tiles: Tile[], dry: boolean): KitPa
 }
 
 /** Which way a structure faces: docks out to sea, fences outwards, the rest towards home. */
+/** Height of a pier's deck above the sea. */
+export const DOCK_DECK = 0.16;
+/** How far a pier reaches out from its tile's centre. */
+export const DOCK_LEN = 2.2;
+
+/** The way a pier points: out towards the open water around its tile. */
+export function dockHeading(i: number, tiles: Tile[]) {
+  let sx = 0;
+  let sz = 0;
+  for (let dz = -3; dz <= 3; dz++)
+    for (let dx = -3; dx <= 3; dx++) {
+      const x = tx(i) + dx;
+      const z = ty(i) + dz;
+      if (x < 0 || z < 0 || x >= SIZE || z >= SIZE) continue;
+      if (tiles[z * SIZE + x].water !== SEA || (!dx && !dz)) continue;
+      const d = Math.hypot(dx, dz);
+      sx += dx / d / d;
+      sz += dz / d / d;
+    }
+  return Math.atan2(sx, sz);
+}
+
 function facingOf(kind: StructureKind, i: number, tiles: Tile[], home: number) {
-  if (kind === "dock") {
-    const sea = around(i).find((n) => tiles[n].water === SEA);
-    if (sea !== undefined) return Math.atan2(wx(sea) - wx(i), wz(sea) - wz(i));
-  }
+  if (kind === "dock") return dockHeading(i, tiles);
   const toHome = Math.atan2(wx(home) - wx(i), wz(home) - wz(i));
   if (kind === "fence") return toHome + Math.PI / 2 + Math.PI / 2;
   if (kind === "walkway") return (tx(i) + ty(i)) % 2 ? 0 : Math.PI / 2;
@@ -254,6 +322,7 @@ const m = new THREE.Matrix4();
 const base = new THREE.Matrix4();
 const local = new THREE.Matrix4();
 const q = new THREE.Quaternion();
+const q2 = new THREE.Quaternion();
 const e = new THREE.Euler();
 const pv = new THREE.Vector3();
 const sv = new THREE.Vector3();
@@ -295,14 +364,10 @@ export function Structures({ world }: { world: WorldState }) {
       const age = world.day - (t.builtDay ?? 0);
       const grow = age >= 1 ? 1 : 0.6;
       // Things shift a little within the tile so rows don't look stamped.
-      const ox =
-        t.build === "farm" || t.build === "fence" || t.build === "walkway"
-          ? 0
-          : (hash(i, 1) - 0.5) * 0.3;
-      const oz =
-        t.build === "farm" || t.build === "fence" || t.build === "walkway"
-          ? 0
-          : (hash(i, 2) - 0.5) * 0.3;
+      const still =
+        t.build === "farm" || t.build === "fence" || t.build === "walkway" || t.build === "dock";
+      const ox = still ? 0 : (hash(i, 1) - 0.5) * 0.3;
+      const oz = still ? 0 : (hash(i, 2) - 0.5) * 0.3;
       q.setFromEuler(e.set(0, face, 0));
       // Buildings at a size people fit (fields, fences and walkways fill their tile).
       const big =
@@ -422,6 +487,31 @@ interface Person {
   fade: number;
   /** Children are smaller; everyone a little different. */
   size: number;
+  /** Fishing from a pier: which one, and how far out along it. */
+  pier?: { dock: number; along: number; side: number };
+}
+
+/** A pier: where it starts (its tile's centre) and which way it runs. */
+interface Pier {
+  tile: number;
+  x: number;
+  z: number;
+  sin: number;
+  cos: number;
+}
+
+/** A dugout canoe that paddles out to fish and comes home. */
+interface Canoe {
+  id: number;
+  pier: number;
+  x: number;
+  z: number;
+  yaw: number;
+  mode: "moored" | "out" | "fishing" | "home";
+  timer: number;
+  tx: number;
+  tz: number;
+  stroke: number;
 }
 
 const SKIN = ["#8a5a3a", "#a4704a", "#6f4428", "#b98458"];
@@ -480,6 +570,21 @@ export function People({ world }: { world: WorldState }) {
   const head = useRef<THREE.InstancedMesh>(null);
   const spear = useRef<THREE.InstancedMesh>(null);
   const canoe = useRef<THREE.InstancedMesh>(null);
+  const canoeInner = useRef<THREE.InstancedMesh>(null);
+  const canoes = useRef<Canoe[]>([]);
+  // Where the piers are and which way they run.
+  const piers = useMemo<Pier[]>(
+    () =>
+      (places.dock ?? []).slice(0, 4).map((i) => {
+        const a = dockHeading(i, world.tiles);
+        return { tile: i, x: wx(i), z: wz(i), sin: Math.sin(a), cos: Math.cos(a) };
+      }),
+    // Piers stay put once built.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [places.dock?.join(",")],
+  );
+  const piersRef = useRef(piers);
+  piersRef.current = piers;
   // The real figure, once it has loaded (the sketch stands in until then).
   const [skin, setSkin] = useState<Skin | null>(null);
   const skinRef = useRef<Skin | null>(null);
@@ -565,11 +670,23 @@ export function People({ world }: { world: WorldState }) {
           list?.length ? list[Math.floor(hash(p.id, Math.floor(t / 20), 5) * list.length)] : home;
         let target = home;
         let spread = 0.4;
+        p.pier = undefined;
         switch (task) {
-          case "fish":
+          case "fish": {
+            // Out along a pier to fish off the end or the side.
+            const piers = piersRef.current;
+            if (piers.length) {
+              const k = Math.floor(hash(p.id, Math.floor(t / 20), 5) * piers.length);
+              p.pier = {
+                dock: k,
+                along: 0.9 + hash(p.id, Math.floor(t / 20), 6) * (DOCK_LEN - 1.1),
+                side: (hash(p.id, Math.floor(t / 20), 7) - 0.5) * 0.18,
+              };
+            }
             target = choose(pl.dock);
-            spread = 0.2;
+            spread = 0;
             break;
+          }
           case "farm":
             target = choose(pl.farm);
             spread = 0.7;
@@ -602,6 +719,25 @@ export function People({ world }: { world: WorldState }) {
           p.tz = wz(target) + (hash(p.id, 8, Math.floor(t)) - 0.5) * spread * 2;
         }
         p.work = t + 12 + hash(p.id, 9, Math.floor(t)) * 14;
+      }
+      // Onto a pier: first to where it leaves the beach, then out along it.
+      let onPier = false;
+      if (p.pier && p.fleeing <= 0) {
+        const pr = piersRef.current[p.pier.dock];
+        if (pr) {
+          const rx = p.x - pr.x;
+          const rz = p.z - pr.z;
+          const along = rx * pr.sin + rz * pr.cos;
+          const across = rx * pr.cos - rz * pr.sin;
+          onPier = along > 0.25 && Math.abs(across) < 0.2;
+          if (Math.hypot(rx, rz) > 0.35 && !onPier) {
+            p.tx = pr.x;
+            p.tz = pr.z;
+          } else {
+            p.tx = pr.x + pr.sin * p.pier.along + pr.cos * p.pier.side;
+            p.tz = pr.z + pr.cos * p.pier.along - pr.sin * p.pier.side;
+          }
+        }
       }
       const dx = p.tx - p.x;
       const dz = p.tz - p.z;
@@ -664,8 +800,9 @@ export function People({ world }: { world: WorldState }) {
       }
       p.phase += dt * (moving ? 14 : 2);
       const ground = heightAt(w.tiles, p.x, p.z);
-      const onSea = p.task === "fish" && d < 0.3 && ground < 0.05;
-      const y = Math.max(ground, 0) + (skin ? 0 : moving ? Math.abs(Math.sin(p.phase)) * 0.012 : 0);
+      const y =
+        (onPier ? Math.max(ground, DOCK_DECK + 0.01) : Math.max(ground, 0)) +
+        (skin ? 0 : moving ? Math.abs(Math.sin(p.phase)) * 0.012 : 0);
       const lean = !skin && p.task === "farm" && !moving ? 0.5 : 0;
       q.setFromEuler(e.set(lean, p.yaw, 0));
       const person = personMesh.current;
@@ -713,13 +850,160 @@ export function People({ world }: { world: WorldState }) {
         );
         spear.current.setMatrixAt(ns++, m);
       }
-      if (canoe.current && onSea && nc < 20) {
+    }
+
+    // --- Canoes: out to the fishing grounds and back ---------------------------
+    const piers = piersRef.current;
+    const boats = canoes.current;
+    const want = env.night ? 0 : Math.min(8, piers.length * 2);
+    while (boats.length < piers.length * 2 && boats.length < 8) {
+      const id = boats.length;
+      const pr = piers[id % piers.length];
+      boats.push({
+        id,
+        pier: id % piers.length,
+        x: pr.x + pr.sin * DOCK_LEN * 0.8,
+        z: pr.z + pr.cos * DOCK_LEN * 0.8,
+        yaw: Math.atan2(pr.sin, pr.cos),
+        mode: "moored",
+        timer: 3 + hash(id, 51) * 20,
+        tx: 0,
+        tz: 0,
+        stroke: 0,
+      });
+      // ?boats=1 starts with the canoes already out (for checking them).
+      if (typeof window !== "undefined" && /[?&]boats=1\b/.test(window.location.search)) {
+        const b = boats[boats.length - 1];
+        const a = Math.atan2(pr.sin, pr.cos) + (hash(id, 55) - 0.5) * 1.2;
+        const r = 1.5 + hash(id, 56) * 3;
+        b.x = pr.x + Math.sin(a) * r;
+        b.z = pr.z + Math.cos(a) * r;
+        b.yaw = a;
+        b.mode = id % 2 ? "fishing" : "out";
+        b.tx = pr.x + Math.sin(a) * (r + 4);
+        b.tz = pr.z + Math.cos(a) * (r + 4);
+        b.timer = 60;
+      }
+    }
+    boats.length = Math.min(boats.length, piers.length * 2);
+    for (const b of boats) {
+      const pr = piers[b.pier];
+      if (!pr) continue;
+      const side = b.id % 2 ? 1 : -1;
+      // Moored alongside the pier, near the end.
+      const mx = pr.x + pr.sin * DOCK_LEN * (0.55 + (b.id % 2) * 0.25) + pr.cos * side * 0.3;
+      const mz = pr.z + pr.cos * DOCK_LEN * (0.55 + (b.id % 2) * 0.25) - pr.sin * side * 0.3;
+      b.timer -= dt;
+      if (b.mode === "moored" && b.timer <= 0 && b.id < want) {
+        // Pick a fishing ground: open water out beyond the pier.
+        for (let k = 0; k < 8; k++) {
+          const a = Math.atan2(pr.sin, pr.cos) + (hash(b.id, Math.floor(t), k) - 0.5) * 1.8;
+          const r = 3 + hash(b.id, Math.floor(t), k + 9) * 7;
+          const fx = pr.x + Math.sin(a) * r;
+          const fz = pr.z + Math.cos(a) * r;
+          if (heightAt(w.tiles, fx, fz) < -0.4) {
+            b.tx = fx;
+            b.tz = fz;
+            b.mode = "out";
+            break;
+          }
+        }
+        b.timer = 5;
+      } else if (b.mode === "fishing" && b.timer <= 0) {
+        b.mode = "home";
+      } else if (b.mode === "moored") {
+        b.x += (mx - b.x) * Math.min(1, dt);
+        b.z += (mz - b.z) * Math.min(1, dt);
+        let turn = Math.atan2(pr.sin, pr.cos) - b.yaw;
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        b.yaw += turn * Math.min(1, dt * 0.5);
+      }
+      if (b.mode === "out" || b.mode === "home") {
+        const gx = b.mode === "out" ? b.tx : mx;
+        const gz = b.mode === "out" ? b.tz : mz;
+        const ddx = gx - b.x;
+        const ddz = gz - b.z;
+        const dd = Math.hypot(ddx, ddz);
+        let turn = Math.atan2(ddx, ddz) - b.yaw;
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        b.yaw += Math.max(-dt * 0.9, Math.min(dt * 0.9, turn));
+        // Paddle strokes: a surge with each pull, gliding between.
+        b.stroke += dt * 2.6;
+        const v = 0.45 * (0.55 + 0.45 * Math.max(0, Math.sin(b.stroke * Math.PI * 2)));
+        const step = Math.min(dd, v * dt * Math.max(0.3, Math.cos(Math.min(1.3, Math.abs(turn)))));
+        b.x += Math.sin(b.yaw) * step;
+        b.z += Math.cos(b.yaw) * step;
+        if (dd < 0.25) {
+          b.mode = b.mode === "out" ? "fishing" : "moored";
+          b.timer =
+            b.mode === "fishing" ? 20 + hash(b.id, Math.floor(t)) * 25 : 8 + hash(b.id, 52) * 20;
+        }
+      }
+      if (b.mode === "fishing") {
+        // Drift a little on the swell.
+        b.x += Math.sin(t * 0.2 + b.id) * dt * 0.02;
+        b.yaw += Math.sin(t * 0.13 + b.id) * dt * 0.05;
+      }
+      // Riding the swell: height from the sea itself, tilting with its slope.
+      const depth = -heightAt(w.tiles, b.x, b.z);
+      const fx = Math.sin(b.yaw) * 0.4;
+      const fz = Math.cos(b.yaw) * 0.4;
+      const hc = seaHeightAt(b.x, b.z, t, depth);
+      const hf = seaHeightAt(b.x + fx, b.z + fz, t, depth);
+      const hb = seaHeightAt(b.x - fx, b.z - fz, t, depth);
+      const hl = seaHeightAt(b.x + fz * 0.4, b.z - fx * 0.4, t, depth);
+      const bob = hc + 0.04;
+      const pitch = Math.atan2(hb - hf, 0.8) * 0.8;
+      const roll = Math.atan2(hl - hc, 0.16) * 0.3 + Math.sin(t * 1.7 + b.id) * 0.03;
+      q.setFromEuler(e.set(pitch, b.yaw, roll, "YXZ"));
+      if (canoe.current && nc < 16) {
+        // The hull sits low: mostly under the waterline, gunwales just above.
+        m.compose(pv.set(b.x, bob + 0.05, b.z), q, sv.set(0.2, 0.13, 0.95));
+        canoe.current.setMatrixAt(nc, m);
+        if (canoeInner.current) {
+          m.compose(pv.set(b.x, bob + 0.042, b.z), q, sv.set(0.15, 0.01, 0.82));
+          canoeInner.current.setMatrixAt(nc, m);
+        }
+        nc++;
+      }
+      // The fisher kneels in it, paddling on the way, still while fishing.
+      const person = personMesh.current;
+      if (skin && person && np < PEOPLE_CAP) {
+        const h = PERSON_H;
+        const k = h / skin.meta.height;
+        const back = -0.12;
         m.compose(
-          pv.set(p.x, 0.01, p.z),
-          q.setFromEuler(e.set(0, Math.atan2(dx, dz) + t * 0.05, 0)),
-          sv.set(0.06, 0.03, 0.28),
+          pv.set(b.x + Math.sin(b.yaw) * back, bob + 0.03 - h * 0.3, b.z + Math.cos(b.yaw) * back),
+          q,
+          sv.set(k, k, k),
         );
-        canoe.current.setMatrixAt(nc++, m);
+        person.setMatrixAt(np, m);
+        cc.setScalar(0.95);
+        person.setColorAt(np, cc);
+        const clip = b.mode === "out" || b.mode === "home" ? "graze" : "idle";
+        const c = skin.meta.clips[clip] ?? skin.meta.clips.idle!;
+        clipRows(c, b.mode === "out" || b.mode === "home" ? b.stroke * c.dur : t + b.id * 3, v3);
+        personAttrs.a.setXYZ(np, v3.x, v3.y, v3.z);
+        personAttrs.b.setXYZ(np, v3.x, v3.y, v3.z);
+        personAttrs.f.setX(np, 0);
+        personAttrs.l.setXYZW(np, (hash(b.id, 53) - 0.5) * 0.3, 1, 0, 0);
+        personAttrs.l2.setXYZW(np, 0, hash(b.id, 54), 0, 0.95);
+        np++;
+        // The paddle, dipping on alternate sides.
+        if (spear.current && ns < 60 && (b.mode === "out" || b.mode === "home")) {
+          const sw = Math.sin(b.stroke * Math.PI * 2);
+          const sideP = (Math.floor(b.stroke) % 2 ? 1 : -1) * 0.1;
+          m.compose(
+            pv.set(
+              b.x + Math.cos(b.yaw) * sideP + Math.sin(b.yaw) * (0.05 + sw * 0.08),
+              0.08 + bob,
+              b.z - Math.sin(b.yaw) * sideP + Math.cos(b.yaw) * (0.05 + sw * 0.08),
+            ),
+            q2.setFromEuler(e.set(0.6 + sw * 0.4, b.yaw, sideP * 3, "YXZ")),
+            sv.set(0.012, 0.28, 0.012),
+          );
+          spear.current.setMatrixAt(ns++, m);
+        }
       }
     }
     const pm = personMesh.current;
@@ -738,6 +1022,7 @@ export function People({ world }: { world: WorldState }) {
       [head.current, nb],
       [spear.current, ns],
       [canoe.current, nc],
+      [canoeInner.current, nc],
     ] as const) {
       if (!mesh) continue;
       mesh.count = n;
@@ -777,9 +1062,14 @@ export function People({ world }: { world: WorldState }) {
         <cylinderGeometry args={[0.5, 0.5, 1, 4]} />
         <meshStandardMaterial color="#5a4029" roughness={0.9} />
       </instancedMesh>
-      <instancedMesh ref={canoe} args={[undefined, undefined, 20]} frustumCulled={false}>
-        <sphereGeometry args={[0.5, 8, 6]} />
-        <meshStandardMaterial color="#6b4a2a" roughness={0.9} />
+      {/* Dugout hulls: the lower half of a long, narrow shell. */}
+      <instancedMesh ref={canoe} args={[undefined, undefined, 16]} frustumCulled={false} castShadow>
+        <sphereGeometry args={[0.5, 14, 6, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2]} />
+        <meshStandardMaterial color="#5e4029" roughness={0.85} side={THREE.DoubleSide} />
+      </instancedMesh>
+      <instancedMesh ref={canoeInner} args={[undefined, undefined, 16]} frustumCulled={false}>
+        <cylinderGeometry args={[0.5, 0.5, 1, 14]} />
+        <meshStandardMaterial color="#2c1e14" roughness={0.95} />
       </instancedMesh>
     </group>
   );
