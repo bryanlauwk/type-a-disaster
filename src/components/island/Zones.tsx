@@ -282,8 +282,10 @@ export function Zones({ tiles, show }: { tiles: Tile[]; show: boolean }) {
     [plain, red],
   );
   useEffect(() => {
-    postRef.current && fence.posts.forEach((m, k) => postRef.current!.setMatrixAt(k, m));
-    wireRef.current && fence.wires.forEach((m, k) => wireRef.current!.setMatrixAt(k, m));
+    const posts = postRef.current;
+    const wires = wireRef.current;
+    if (posts) fence.posts.forEach((m, k) => posts.setMatrixAt(k, m));
+    if (wires) fence.wires.forEach((m, k) => wires.setMatrixAt(k, m));
     if (postRef.current) postRef.current.instanceMatrix.needsUpdate = true;
     if (wireRef.current) wireRef.current.instanceMatrix.needsUpdate = true;
   }, [fence]);
