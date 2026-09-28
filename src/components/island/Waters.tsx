@@ -616,7 +616,7 @@ void main() {
           uTime: { value: 0 },
           uLight: { value: 1 },
           uSpeed: { value: 1.6 },
-          uThrow: { value: 0.25 },
+          uThrow: { value: 1.1 },
         },
         transparent: true,
         side: THREE.DoubleSide,
@@ -652,18 +652,55 @@ void main() {
       }),
     [],
   );
+  // A faint rainbow in the spray of the big falls, when the sun is out.
+  const bowMat = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: /* glsl */ `
+varying vec3 vPos;
+void main() { vPos = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: /* glsl */ `
+uniform float uInner;
+uniform float uOuter;
+uniform float uLight;
+varying vec3 vPos;
+vec3 hue(float h) { return clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); }
+void main() {
+  float r = (length(vPos.xy) - uInner) / (uOuter - uInner);
+  float band = smoothstep(0.0, 0.15, r) * smoothstep(1.0, 0.85, r);
+  // Red outside, violet inside; strongest in the middle of the arc.
+  vec3 c = hue(0.78 * (1.0 - r));
+  float arc = smoothstep(0.0, 0.5, vPos.y / uOuter);
+  gl_FragColor = vec4(c * band * arc * 0.35 * uLight, 1.0);
+}`,
+        uniforms: { uInner: { value: 1 }, uOuter: { value: 1.2 }, uLight: { value: 1 } },
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  );
   useEffect(
     () => () => {
       material.dispose();
       poolMat.dispose();
+      bowMat.dispose();
     },
-    [material, poolMat],
+    [material, poolMat, bowMat],
   );
   useFrame(({ clock }) => {
     material.uniforms.uTime.value = clock.elapsedTime;
     material.uniforms.uLight.value = 0.3 + env.daylight * 0.75;
     poolMat.uniforms.uTime.value = clock.elapsedTime;
     poolMat.uniforms.uLight.value = 0.3 + env.daylight * 0.75;
+    const big = falls.find((f) => f.big);
+    if (big) {
+      const drop = big.top - Math.max(0, big.bottom);
+      bowMat.uniforms.uInner.value = drop * 0.75;
+      bowMat.uniforms.uOuter.value = drop * 0.95;
+    }
+    bowMat.uniforms.uLight.value = env.raining || env.night ? 0 : Math.max(0, env.daylight - 0.3);
   });
   const clock = useMemo(() => {
     const start = performance.now();
@@ -673,45 +710,55 @@ void main() {
     <group>
       {falls.map((f, k) => {
         const drop = f.top - f.bottom;
-        const w = f.big ? 2.4 : 0.9;
+        const w = f.big ? 3 : 0.9;
         return (
           <group key={k} position={[f.x, 0, f.z]} rotation-y={-f.ang + Math.PI / 2}>
-            {/* The main curtain, and for the big falls two thinner strands beside it. */}
+            {/* The curtain leaves the lip (near the upper tile) and arcs out clear
+                of the cliff; the big falls has two thinner strands beside it. */}
             {(f.big ? [0, -1, 1] : [0]).map((side) => (
               <mesh
                 key={side}
                 material={material}
                 position={[
-                  side * w * 0.62,
-                  (f.top + f.bottom) / 2 - (side ? drop * 0.05 : 0),
-                  side ? -0.05 : 0,
+                  side * w * 0.6,
+                  (f.top + f.bottom) / 2 - (side ? drop * 0.06 : 0),
+                  -0.45 - (side ? 0.08 : 0),
                 ]}
                 renderOrder={3}
               >
-                <planeGeometry args={[side ? w * 0.28 : w, drop, 12, 16]} />
+                <planeGeometry args={[side ? w * 0.3 : w, drop, 12, 20]} />
               </mesh>
             ))}
             <mesh
               material={poolMat}
-              position={[0, Math.max(0, f.bottom) + 0.06, 0.45 + drop * 0.08]}
+              position={[0, Math.max(0, f.bottom) + 0.06, 0.7]}
               rotation-x={-Math.PI / 2}
               renderOrder={4}
             >
-              <planeGeometry args={[w * 1.8, w * 1.4]} />
+              <planeGeometry args={[w * 2, w * 1.6]} />
             </mesh>
             <Puffs
               getT={clock}
-              origin={[0, f.bottom + 0.15, 0.4]}
-              count={f.big ? 80 : 16}
-              duration={f.big ? 3.5 : 2.5}
-              spread={f.big ? 2.2 : 0.5}
-              rise={f.big ? 2.8 : 0.8}
-              size={f.big ? [0.8, 2.6] : [0.25, 0.7]}
+              origin={[0, Math.max(0, f.bottom) + 0.15, 0.7]}
+              count={f.big ? 110 : 16}
+              duration={f.big ? 4 : 2.5}
+              spread={f.big ? 3 : 0.5}
+              rise={f.big ? drop * 1.1 : 0.8}
+              size={f.big ? [1, 3.2] : [0.25, 0.7]}
               color="#f4f8fa"
               opacity={f.big ? 0.5 : 0.55}
               loop
               seed={f.seed}
             />
+            {f.big && (
+              <mesh
+                material={bowMat}
+                position={[0, Math.max(0, f.bottom) - 0.3, 1.6]}
+                renderOrder={5}
+              >
+                <ringGeometry args={[drop * 0.75, drop * 0.95, 64, 1, 0, Math.PI]} />
+              </mesh>
+            )}
           </group>
         );
       })}

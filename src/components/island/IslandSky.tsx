@@ -79,6 +79,7 @@ export function IslandSky({
   const cloudTex = useMemo(() => cloudTexture(seed), [seed]);
   const sun = useRef<THREE.DirectionalLight>(null);
   const hemi = useRef<THREE.HemisphereLight>(null);
+  const fill = useRef<THREE.DirectionalLight>(null);
   const rain = useRef<THREE.InstancedMesh>(null);
   const clouds = useRef<THREE.InstancedMesh>(null);
   const sky = useMemo(() => new THREE.Color(DAY), []);
@@ -204,6 +205,13 @@ export function IslandSky({
       sun.current.color.setHSL(0.08, 0.75, 0.6 + daylight * 0.33);
       if (w.ash) sun.current.color.lerp(new THREE.Color("#ff9a5a"), 0.4);
     }
+    if (fill.current && sun.current) {
+      const tgt = controls?.target ?? ORIGIN;
+      fill.current.position.set(tgt.x - Math.cos(az) * 50, tgt.y + 45, tgt.z - 60);
+      fill.current.target.position.copy(tgt);
+      fill.current.target.updateMatrixWorld();
+      fill.current.intensity = (0.08 + daylight * 0.55) * (raining ? 0.7 : 1);
+    }
     if (hemi.current) {
       hemi.current.intensity = (0.45 + daylight * 0.35) * (raining ? 0.8 : 1) + flash * 1.2;
       hemi.current.color.setHSL(env.night ? 0.62 : 0.12, 0.45, env.night ? 0.5 : 0.9);
@@ -263,7 +271,9 @@ export function IslandSky({
   return (
     <>
       <fog attach="fog" args={["#b8d6e8", 90, 320]} />
-      <hemisphereLight ref={hemi} args={["#fff8e7", "#4d6340", 0.8]} />
+      <hemisphereLight ref={hemi} args={["#fff8e7", "#66764f", 0.8]} />
+      {/* Skylight from the side away from the sun, so shaded slopes (the north coast) aren't black. */}
+      <directionalLight ref={fill} intensity={0.4} color="#cfdcf2" />
       <directionalLight
         ref={sun}
         castShadow={shadows}

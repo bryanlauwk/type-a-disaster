@@ -35,10 +35,10 @@ const LOOK: Record<
   Kind,
   { atlas: string; height: number; shadow: boolean; max: number; bright?: number }
 > = {
-  conifer: { atlas: "conifer", height: 2.8, shadow: true, max: 7000, bright: 1.15 },
-  sapling: { atlas: "sapling", height: 1.1, shadow: true, max: 5000, bright: 1.35 },
-  jungle: { atlas: "jungle", height: 2.5, shadow: true, max: 4000 },
-  broadleaf: { atlas: "broadleaf", height: 1.3, shadow: true, max: 3000, bright: 1.5 },
+  conifer: { atlas: "conifer", height: 2.8, shadow: true, max: 9000, bright: 1.6 },
+  sapling: { atlas: "sapling", height: 1.1, shadow: true, max: 6000, bright: 1.5 },
+  jungle: { atlas: "jungle", height: 2.5, shadow: true, max: 5000, bright: 1.1 },
+  broadleaf: { atlas: "broadleaf", height: 1.3, shadow: true, max: 4500, bright: 1.5 },
   palm: { atlas: "palm", height: 1.5, shadow: true, max: 2500 },
   cycad: { atlas: "palm", height: 0.45, shadow: false, max: 5000 },
   cypress: { atlas: "cypress", height: 2.0, shadow: true, max: 3000 },
@@ -62,6 +62,8 @@ interface Plant {
 /** What grows on a tile, decided by its biome, cover and a stable hash. */
 /** Low plants that may grow on trails and in the old park's yard, where trees don't. */
 const LOW = new Set(["fern", "shrub", "cycad"]);
+/** The trees proper. */
+const TALL = new Set(["conifer", "jungle", "broadleaf", "cypress", "palm"]);
 
 function plantsOn(t: Tile, i: number, out: Plant[], open = false) {
   if (t.water || t.build || t.lava > 0 || t.biome === "lava" || t.biome === "farm") return;
@@ -81,7 +83,12 @@ function plantsOn(t: Tile, i: number, out: Plant[], open = false) {
         kind,
         x: wx(i) + (hash(i, k, 1) - 0.5) * 0.95,
         z: wz(i) + (hash(i, k, 2) - 0.5) * 0.95,
-        s: scale * (0.7 + hash(i, k, 3) * 0.6),
+        // Trees vary more, and now and then an old giant stands over the rest.
+        s:
+          scale *
+          (TALL.has(kind)
+            ? (0.6 + hash(i, k, 3) * 0.8) * (hash(i, k, 6) < 0.06 ? 1.55 : 1)
+            : 0.7 + hash(i, k, 3) * 0.6),
         r: hash(i, k, 4) * Math.PI * 2,
         tint: hash(i, k, 5),
       });
@@ -100,20 +107,26 @@ function plantsOn(t: Tile, i: number, out: Plant[], open = false) {
       put("cycad", f * 1.2 + v * 0.3);
       break;
     case "jungle":
-      put("jungle", f * 0.7);
+      put("jungle", f * 1.0);
+      put("broadleaf", f * 0.25);
+      put("palm", f * 0.1);
       put("treefern", f * 0.9);
       put("pachira", v * 1.6);
       put("fern", v * 2.5);
       break;
     case "conifer":
-      put("conifer", f * 1.6);
+      put("conifer", f * 2.2);
       put("sapling", f * 0.8);
-      put("fern", v * 0.8);
+      // Broadleaves and fallen trunks break up the stands of pine.
+      put("broadleaf", f * 0.18);
+      put("dead", f * 0.1);
+      put("fern", v * 1.4);
       break;
     case "ridge":
     case "highland":
       put("conifer", f * 1.1);
       put("sapling", f * 0.6);
+      put("broadleaf", f * 0.12);
       put("shrub", v * 1.5);
       break;
     case "grass":
@@ -208,7 +221,13 @@ export function Vegetation({
       mesh.setMatrixAt(k, tmpM);
       // A little variety; the dry season browns the leaves.
       const shade = (0.82 + p.tint * 0.3) * (look.bright ?? 1);
-      tmpC.setRGB(shade, shade, shade);
+      // Each tree its own green: some yellower, some bluer.
+      const warm = Math.sin(p.r * 3.7 + p.tint * 5.0);
+      tmpC.setRGB(
+        shade * (1 + 0.1 * warm),
+        shade * (1 + 0.04 * Math.cos(p.r * 5.3)),
+        shade * (1 - 0.12 * warm),
+      );
       if (dry && p.kind !== "dead" && p.kind !== "conifer" && p.kind !== "sapling")
         tmpC.lerp(DRY, 0.25 + p.tint * 0.2);
       mesh.setColorAt(k, tmpC);
