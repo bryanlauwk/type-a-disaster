@@ -189,6 +189,31 @@ void main() {
   }
 }`;
 
+const SWELL: [number, number, number, number][] = [
+  // direction x, z, wavelength, height (matching the sea shader's first trains)
+  [-0.62, -0.78, 15.0, 0.14],
+  [-0.85, -0.35, 9.3, 0.08],
+  [-0.2, -0.95, 5.1, 0.045],
+];
+
+/**
+ * The height of the sea's surface at a point, the same swell the sea is drawn
+ * with (its main wave trains), so boats ride it. `depth` is how deep the
+ * water is there: the swell dies down over the shallows.
+ */
+export function seaHeightAt(x: number, z: number, time: number, depth: number) {
+  const calm = Math.min(1, Math.max(0, (depth - 0.05) / 2.45));
+  const c2 = calm * calm * (3 - 2 * calm);
+  let y = 0;
+  for (const [dx, dz, len, amp] of SWELL) {
+    const l = Math.hypot(dx, dz);
+    const k = (Math.PI * 2) / len;
+    const c = Math.sqrt(9.8 / k) * 0.35;
+    y += amp * c2 * Math.sin(k * ((dx / l) * x + (dz / l) * z - c * time));
+  }
+  return y;
+}
+
 /** Island heights as a texture, so the sea knows how deep it is. */
 function heightTexture(tiles: Tile[]) {
   const data = new Uint8Array(SIZE * SIZE * 4);

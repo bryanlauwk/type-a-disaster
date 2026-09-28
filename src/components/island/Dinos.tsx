@@ -22,6 +22,8 @@ import { FORMS, pickLook } from "./dinoForms";
 import { surgeBus } from "./Tsunami";
 import { eruptBus } from "./Eruption";
 import { dustBus } from "./fx/dust";
+import { newGroup, panic, slotOf, stepGroup, type HerdGroup } from "./herds";
+import { env } from "./fx/env";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -99,6 +101,9 @@ export interface Agent {
   maxRun?: number;
   /** Seconds until the next puff of dust from its feet. */
   dust?: number;
+  /** The herd it grazes with (plant-eaters), and which way it wants to face when standing. */
+  group?: string;
+  face?: number;
 }
 
 /** Shared with the rest of the scene: where the dangerous animals are right now. */
@@ -456,6 +461,8 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
   worldRef.current = world;
   // An anchor per species and region that each little herd grazes around.
   const anchors = useRef(new Map<string, { i: number; until: number }>());
+  // Plant-eaters' herds: a shared centre and mood for each kind in each place.
+  const groups = useRef(new Map<string, HerdGroup>());
 
   // Match the animals on screen to the simulation.
   useEffect(() => {
@@ -645,6 +652,50 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       }
     }
 
+    // --- Herds: who's in which, and what each herd does next --------------------
+    const gmap = groups.current;
+    for (const g of gmap.values()) {
+      g.n = 0;
+      g.sumX = 0;
+      g.sumZ = 0;
+      g.len = 0;
+    }
+    for (const a of list) {
+      a.group = undefined;
+      if (a.state === "dead" || a.herd || a.path) continue;
+      if (SPECIES_DEFS[a.sp].diet !== "plants") continue;
+      const gait = MODELS[a.sp].gait;
+      if (gait === "fly" || gait === "swim") continue;
+      const key = `${a.sp}|${a.region}|${a.form}`;
+      let g = gmap.get(key);
+      if (!g) {
+        g = newGroup(key, a.region, a.x, a.z, t);
+        gmap.set(key, g);
+      }
+      g.n++;
+      g.sumX += a.x;
+      g.sumZ += a.z;
+      g.len = Math.max(g.len, lengthOf(a));
+      g.seen = t;
+      a.group = key;
+    }
+    const hot = env.hour > 11.5 && env.hour < 15;
+    for (const [key, g] of gmap) {
+      if (t - g.seen > 5) {
+        gmap.delete(key);
+        continue;
+      }
+      if (!g.n) continue;
+      // A herd that's drifted apart from its centre gathers round its members.
+      const mx = g.sumX / g.n;
+      const mz = g.sumZ / g.n;
+      if (Math.hypot(mx - g.cx, mz - g.cz) > 14) {
+        g.cx = mx;
+        g.cz = mz;
+      }
+      stepGroup(g, w.tiles, t, dt, hot);
+    }
+
     for (let k = list.length - 1; k >= 0; k--) {
       const a = list[k];
       const model = MODELS[a.sp];
@@ -804,29 +855,48 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
               a.prey = best;
               a.state = "hunt";
               a.timer = 8;
+              // Raptors hunt as a pack: the others nearby join in on the same quarry.
+              if (a.sp === "raptor")
+                for (const o of list)
+                  if (
+                    o !== a &&
+                    o.sp === "raptor" &&
+                    o.state !== "dead" &&
+                    o.state !== "hunt" &&
+                    !o.herd &&
+                    Math.hypot(o.x - a.x, o.z - a.z) < 8
+                  ) {
+                    o.prey = best;
+                    o.state = "hunt";
+                    o.timer = 8;
+                  }
             }
           }
         } else {
-          // Grazers watch for hunters. Most run; the armoured ones turn and
-          // face them: a clubtail swings its tail, a hornface lowers its
-          // horns and bellows, and the youngsters bolt.
+          // Grazers watch for hunters. The armoured grown-ups turn and face
+          // them (a clubtail swings its tail, a hornface lowers its horns and
+          // bellows); for everyone else the whole herd bolts together.
+          const g = a.group ? gmap.get(a.group) : undefined;
+          let stood = false;
           for (const o of lifeBus.hunters) {
             const d = Math.hypot(o.x - a.x, o.z - a.z);
-            if (d < 3 + a.scale) {
+            if (d < 3.5 + lengthOf(a)) {
               const stand =
                 !a.young && (a.sp === "plateback" || (a.sp === "hornface" && hash(a.id, 21) < 0.5));
               if (stand) {
+                stood = true;
                 a.state = "idle";
                 a.timer = 2;
                 a.tx = a.x;
                 a.tz = a.z;
-                a.yaw =
+                a.face =
                   Math.atan2(o.x - a.x, o.z - a.z) + (a.sp === "plateback" ? Math.PI * 0.8 : 0);
                 if (!a.actFor) {
                   a.act = a.sp === "plateback" ? "tail" : "roar";
                   a.actFor = 2.2;
                 }
-              } else {
+              } else if (g) panic(g, o.x, o.z, t);
+              else {
                 a.state = "flee";
                 a.timer = 3;
                 const away = Math.atan2(a.z - o.z, a.x - o.x);
@@ -836,8 +906,58 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
               break;
             }
           }
-          // Youngsters keep close to an adult of their kind.
-          if (a.young && a.state !== "flee") {
+          if (g && !stood) {
+            const slot = slotOf(g, a.id, a.young, t);
+            const gap = Math.hypot(slot.x - a.x, slot.z - a.z);
+            const len = lengthOf(a);
+            a.tx = slot.x;
+            a.tz = slot.z;
+            a.timer = 1;
+            switch (g.mode) {
+              case "flee":
+                a.state = "flee";
+                break;
+              case "move":
+              case "drink":
+                a.state = gap > len * 0.3 ? "walk" : "graze";
+                break;
+              default:
+                if (gap > len * 0.6) a.state = "walk";
+                else {
+                  a.tx = a.x;
+                  a.tz = a.z;
+                  // Heads down to feed, but someone's always looking up.
+                  const look = hash(a.id, Math.floor(t / (3 + hash(a.id, 84) * 3)), 85);
+                  a.state =
+                    g.mode === "rest"
+                      ? a.young || hash(a.id, 86) < 0.5
+                        ? "nest"
+                        : "idle"
+                      : g.mode === "alert"
+                        ? "idle"
+                        : g.mode === "water"
+                          ? "drink"
+                          : look < 0.28
+                            ? "idle"
+                            : "graze";
+                  a.face =
+                    g.mode === "alert" && g.threat
+                      ? Math.atan2(g.threat.x - a.x, g.threat.z - a.z)
+                      : g.mode === "water"
+                        ? Math.atan2(g.tx - a.x, g.tz - a.z)
+                        : g.heading + (hash(a.id, 87) - 0.5) * 1.6;
+                }
+            }
+          }
+          // Youngsters keep close to an adult of their kind (unless the herd is on the move).
+          const herdMode = a.group ? gmap.get(a.group)?.mode : undefined;
+          if (
+            a.young &&
+            a.state !== "flee" &&
+            herdMode !== "flee" &&
+            herdMode !== "move" &&
+            herdMode !== "drink"
+          ) {
             if (!a.mum || a.mum.state === "dead" || a.mum.region !== a.region) {
               a.mum = null;
               let bestD = 6;
@@ -881,7 +1001,16 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         } else {
           a.tx = pr.x;
           a.tz = pr.z;
-          if (Math.hypot(pr.x - a.x, pr.z - a.z) < 0.25 + a.scale * 0.25) {
+          const dp = Math.hypot(pr.x - a.x, pr.z - a.z);
+          if (a.sp === "raptor" && dp > 1.5) {
+            // Fanning out to come at it from the sides.
+            const flank = (hash(a.id, 88) - 0.5) * 2;
+            const ax = (pr.x - a.x) / dp;
+            const az = (pr.z - a.z) / dp;
+            a.tx += -az * flank * dp * 0.45;
+            a.tz += ax * flank * dp * 0.45;
+          }
+          if (dp < 0.25 + a.scale * 0.25) {
             // Caught.
             pr.state = "dead";
             pr.deadFor = 0;
@@ -896,6 +1025,7 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
 
       if (
         !a.herd &&
+        !a.group &&
         model.gait !== "fly" &&
         model.gait !== "swim" &&
         (a.state === "idle" ||
@@ -1017,6 +1147,13 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       } else if (a.state === "walk" && !a.herd && model.gait !== "fly" && model.gait !== "swim") {
         a.state = SPECIES_DEFS[a.sp].diet === "plants" ? "graze" : "idle";
         a.timer = 2 + hash(a.id, Math.floor(t)) * 4;
+      }
+      // Standing, it turns slowly to face where it means to (the herd's way, a threat, the water).
+      if (a.face !== undefined && a.speed < 0.02 && model.gait !== "fly" && model.gait !== "swim") {
+        let turn = a.face - a.yaw;
+        turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+        a.yaw += turn * Math.min(1, dt * (1.2 / (0.6 + lengthOf(a) * 0.3)));
+        if (Math.abs(turn) < 0.03) a.face = undefined;
       }
       a.phase += dt * (2 + (a.speed * (model.gait === "fly" ? 3 : 6)) / Math.max(0.4, a.scale));
       const ground = heightAt(w.tiles, a.x, a.z);
