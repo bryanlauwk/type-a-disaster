@@ -26,6 +26,24 @@ interface Part {
 
 const cache = new Map<string, Promise<Part[]>>();
 
+const LIFT: Record<string, number> = {
+  boulder: 1.7,
+  slab: 1.7,
+  rock_face_1: 1.7,
+  rock_face_2: 1.7,
+  crag: 1.8,
+  coast_rock: 1.8,
+  moss_rock_1: 2.5,
+  moss_rock_2: 2.5,
+  moss_rock_3: 2.5,
+  moss_rock_4: 2.5,
+  moss_rock_5: 2.2,
+  moss_rock_6: 2.2,
+  dead_trunk: 1.5,
+  stump: 1.5,
+  roots: 1.5,
+};
+
 export function loadProp(key: string): Promise<Part[]> {
   let p = cache.get(key);
   if (!p) {
@@ -55,6 +73,9 @@ export function loadProp(key: string): Promise<Part[]> {
           mat.alphaTest = Math.min(mat.alphaTest || 0.5, 0.5);
           mat.side = THREE.DoubleSide;
         }
+        // The scans' colour maps are true to life but read dark under the
+        // island's light next to the ground: lift them to sit with it.
+        mat.color.multiplyScalar(LIFT[key] ?? 1);
         parts.push({ geometry: g, material: mat });
       });
       return parts;
@@ -138,7 +159,7 @@ export function naturePlacements(tiles: Tile[], seed: number, skip?: Set<number>
     const slope = slopeOf(i);
     const coast = around(i).some((j) => tiles[j].water === SEA);
     const volcanic = t.region === "volcano";
-    const shade = 0.8 + h(3) * 0.3;
+    const shade = 1.05 + h(3) * 0.3;
     const tint = volcanic ? "#8f8a84" : t.biome === "canyon" ? "#d6b08a" : "#ffffff";
     // Outcrops and rock faces break out of the steep ground.
     if (slope > 0.8 && h(4) < 0.1 + Math.min(0.25, (slope - 0.8) * 0.25)) {

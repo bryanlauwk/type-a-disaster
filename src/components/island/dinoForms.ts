@@ -141,9 +141,9 @@ export function pickLook(sp: SpeciesId, region: string, id: number, young: boole
  * ankylosaurs keep their scales.
  */
 export const COATS: Record<string, { layers: number; len: number; legs: number }> = {
-  raptor: { layers: 6, len: 0.024, legs: 0.13 },
-  raptor_2: { layers: 6, len: 0.024, legs: 0.13 },
-  snapper: { layers: 5, len: 0.03, legs: 0.12 },
+  raptor: { layers: 9, len: 0.05, legs: 0.13 },
+  raptor_2: { layers: 9, len: 0.05, legs: 0.13 },
+  snapper: { layers: 7, len: 0.045, legs: 0.12 },
   skywing: { layers: 3, len: 0.01, legs: -1 },
   skywing_2: { layers: 3, len: 0.01, legs: -1 },
 };

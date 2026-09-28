@@ -439,18 +439,34 @@ export function generateIsland(seed: number): WorldState {
       lowered.set(fallsPath[k], h);
     }
     const above = new Set(fallsPath.slice(0, fallsAt + 1));
-    // And the lip stands higher: the river runs flat across a rock shelf to the edge.
-    const lip = tiles[falls].h + 1.1;
-    for (let k = fallsAt; k >= Math.max(0, fallsAt - 5); k--) {
-      const i = fallsPath[k];
-      tiles[i].h = Math.max(tiles[i].h, lip);
-      for (const n of around(i)) {
-        const t = tiles[n];
-        if (lowered.has(n) || fallsPath.indexOf(n) > fallsAt) continue;
-        if (t.water === RIVER) t.h = Math.max(t.h, lip);
-        else if (!t.water) t.h = Math.max(t.h, lip + 0.15);
+    // And the lip stands high on a rocky tableland: the river runs across it
+    // to the edge and drops the full height of the cliff.
+    const lip = tiles[falls].h + 2.1;
+    const fx = tx(falls);
+    const fy = ty(falls);
+    const R = 6;
+    const upstream = new Set(fallsPath.slice(Math.max(0, fallsAt - 8), fallsAt + 1));
+    const downstream = new Set(fallsPath.slice(fallsAt + 1));
+    for (let dy = -R; dy <= R; dy++)
+      for (let dx = -R; dx <= R; dx++) {
+        const x = fx + dx;
+        const y = fy + dy;
+        if (x < 0 || y < 0 || x >= SIZE || y >= SIZE) continue;
+        const i = idx(x, y);
+        const t = tiles[i];
+        const d = Math.hypot(dx, dy);
+        if (d > R || t.water === SEA || t.water === LAKE || lowered.has(i) || downstream.has(i))
+          continue;
+        if (upstream.has(i)) {
+          // The river climbs gently back from the lip, so it still flows to it.
+          t.h = Math.max(t.h, lip + d * 0.04);
+          continue;
+        }
+        const k = Math.min(1, Math.max(0, (R - d) / (R - 2)));
+        const top = lip + 0.2 - d * 0.12;
+        if (t.water === RIVER) t.h = Math.max(t.h, t.h + (lip - t.h) * k);
+        else t.h = Math.max(t.h, t.h + (top - t.h) * k);
       }
-    }
     for (const [i, h] of lowered)
       for (const n of around(i))
         if (tiles[n].water === RIVER && !lowered.has(n) && !above.has(n))

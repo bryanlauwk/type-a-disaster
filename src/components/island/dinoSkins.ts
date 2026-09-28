@@ -196,9 +196,14 @@ function patch(material: THREE.Material, bake: THREE.DataTexture, shell?: Shell)
 \tvRestN = normalize(mat3(bakeRest) * normal);${
           shell
             ? `
-\t// Out along the surface (in the model's own units), drooping a little.
+\t// Out from the body and swept back, lying like feathers do, longer on the
+\t// tail and the back of the arms. Worked out in the normalised rest frame
+\t// (body length 1, facing +z) and carried back into the model's own units.
 \tfloat restScale = length(bakeRest[0].xyz);
-\ttransformed += (normal * (1.0 - 0.35 * uShellAt) + vec3(0.0, -0.35, 0.0) * uShellAt) * uShellAt * uShellLen / max(restScale, 1e-6);`
+\tfloat plume = 1.0 + 1.6 * smoothstep(-0.16, -0.42, vRest.z) + 0.6 * smoothstep(0.12, 0.3, abs(vRest.x) / max(0.2, vRest.y + 0.2));
+\tvec3 sweep = vRestN * (0.7 - 0.35 * uShellAt) + vec3(0.0, -0.18, -0.75) * (0.4 + 0.6 * uShellAt);
+\tvec3 reach = sweep * uShellAt * uShellLen * plume;
+\ttransformed += transpose(mat3(bakeRest)) * reach / max(restScale * restScale, 1e-6);`
             : ""
         }
 \tvLook = aLook;
@@ -219,11 +224,19 @@ function patch(material: THREE.Material, bake: THREE.DataTexture, shell?: Shell)
 \tdiffuseColor.rgb = dinoLook(diffuseColor.rgb);${
             shell
               ? `
-\t// One strand per little cell of the body; fewer reach the outer layers,
-\t// and none grow on the lower legs and feet.
-\tfloat strand = shellH(floor(vRest * 190.0));
-\tif (strand < uShellAt * 0.9 + 0.08 || vRest.y < uShellLegs) discard;
-\tdiffuseColor.rgb *= mix(0.62, 1.12, uShellAt);`
+\t// Feathers: the body is split into small cells, longer than wide along
+\t// the body, and each cell grows one feather that narrows to its tip as the
+\t// layers go out. None grow on the lower legs and feet.
+\tvec3 fc = vRest * vec3(95.0, 95.0, 48.0);
+\tvec3 cell = floor(fc);
+\tvec2 across = fract(fc.xy) - 0.5;
+\tfloat own = shellH(cell);
+\tfloat width = mix(0.95, 0.18, uShellAt) * (0.8 + own * 0.4);
+\tif (length(across) * 2.0 > width || own < uShellAt * 0.45 || vRest.y < uShellLegs) discard;
+\tfloat tail = smoothstep(-0.16, -0.42, vRest.z);
+\t// Darker near the skin, paler tips, each feather its own shade; the tail barred.
+\tdiffuseColor.rgb *= mix(0.75, 1.35, uShellAt) * (0.85 + own * 0.3);
+\tdiffuseColor.rgb *= 1.0 - tail * 0.45 * step(0.5, fract(vRest.z * 16.0 + own * 0.15));`
               : ""
           }`,
         );
@@ -249,6 +262,14 @@ export function coatLayers(skin: Skin, layers: number, len: number, legs: number
 }
 
 const cache = new Map<string, Promise<Skin>>();
+
+const SKIN_LIFT: Record<string, number> = {
+  raptor: 2.1,
+  raptor_2: 2.3,
+  skywing: 2.0,
+  skywing_2: 1.6,
+  snapper: 1.3,
+};
 
 /** Loads a model (a species' look) and its baked animations (once). */
 export function loadSkin(sp: string): Promise<Skin> {
@@ -306,6 +327,8 @@ export function loadSkin(sp: string): Promise<Skin> {
         mat.roughness = 0.8;
         mat.metalness = 0;
         mat.envMapIntensity = 0.6;
+        // A few models were painted very dark: lift them to a living brown.
+        mat.color.multiplyScalar(SKIN_LIFT[sp] ?? 1);
         // Some source textures carry stray alpha: skin is always opaque. Hair
         // and beards are cut-out cards and keep their holes.
         const cards = /hair|beard|transparency_pbr|obj_default_transparency/i.test(mat.name);
