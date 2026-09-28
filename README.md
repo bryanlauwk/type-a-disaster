@@ -73,6 +73,8 @@ The dinosaurs are real 3D models, all CC BY 4.0 via Sketchfab (from the Objavers
 
 Plants are real models too, photographed from 16 angles into impostor atlases (`public/plants`, `src/components/island/impostors.ts`): Poly Haven's CC0 fir, fir sapling, island tree, fern, shrub, pachira and dead-trunk scans, plus CC BY 4.0 models from Sketchfab: "Ponga" (tree fern) by toAflame, "Realistic Palm Tree Model vol.1" by aliyeredon, "Bald Cypress" by BaptisteBerard and "Jungle Tree" by kobaltsecond6c7d6150917a4267.
 
+Rocks, cliffs, fallen wood and the old park's things are CC0 Poly Haven scans, simplified and instanced (`scripts/props/props.mjs`, `public/props`, `src/components/island/Props.tsx`): boulders and mossy rock sets, rock faces, a cliff, coast rocks, a dead trunk, stump and roots, a large iron gate, chain-link fence, electricity poles, a covered car, a tyre, barrel, crate, road barrier and utility box. The trails, bridges and ruined buildings (`src/components/island/Park.tsx`, `src/lib/island/park.ts`) are built in code on Poly Haven's CC0 stony dirt path, weathered planks, mossy concrete and rusty corrugated iron textures.
+
 The ground is eight CC0 Poly Haven photo surfaces (aerial grass, forest litter, earth, coastal sand, mossy rock, cliff strata, basalt, burnt ground) blended per tile (`src/components/island/ground.ts`). The water ripple normal map comes from the three.js examples (MIT).
 
 Everything else on the island is generated in code. The sky is Poly Haven's [Kloofendal 48d Partly Cloudy (Pure Sky)](https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky) by Greg Zaal and Jarod Guest (CC0). Primordia, its tribe and its animals are fictional.

@@ -54,6 +54,8 @@ export interface Skin {
   materials: THREE.Material | THREE.Material[];
   depth: THREE.Material;
   meta: SkinMeta;
+  /** The baked bone matrices (shared with any feather layers). */
+  bake: THREE.DataTexture;
 }
 
 const VERT_PARS = /* glsl */ `
@@ -151,9 +153,34 @@ vec3 dinoLook(vec3 c) {
 }
 `;
 
-function patch(material: THREE.Material, bake: THREE.DataTexture) {
+/**
+ * A layer of a feather coat: the body drawn again a hair further out along
+ * its surface, keeping only the strands long enough to reach this far.
+ * Several of these stacked read as a soft coat of feathers or fuzz.
+ */
+export interface Shell {
+  /** 0..1, how far out this layer is. */
+  at: number;
+  /** Coat depth, in body lengths. */
+  len: number;
+  /** Below this height (body lengths) the legs and feet stay bare scale. */
+  legs: number;
+}
+
+const SHELL_FRAG = /* glsl */ `
+uniform float uShellAt;
+uniform float uShellLegs;
+float shellH(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+`;
+
+function patch(material: THREE.Material, bake: THREE.DataTexture, shell?: Shell) {
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uBake = { value: bake };
+    if (shell) {
+      shader.uniforms.uShellAt = { value: shell.at };
+      shader.uniforms.uShellLen = { value: shell.len };
+      shader.uniforms.uShellLegs = { value: shell.legs };
+    }
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", `#include <common>\n${VERT_PARS}`)
       .replace("void main() {", "void main() {\n\tbakeSkin = bakeSkinMatrix();")
@@ -166,21 +193,59 @@ function patch(material: THREE.Material, bake: THREE.DataTexture) {
         `#include <begin_vertex>
 \tmat4 bakeRest = bakeRestMatrix();
 \tvRest = (bakeRest * vec4(transformed, 1.0)).xyz;
-\tvRestN = normalize(mat3(bakeRest) * normal);
+\tvRestN = normalize(mat3(bakeRest) * normal);${
+          shell
+            ? `
+\t// Out along the surface (in the model's own units), drooping a little.
+\tfloat restScale = length(bakeRest[0].xyz);
+\ttransformed += (normal * (1.0 - 0.35 * uShellAt) + vec3(0.0, -0.35, 0.0) * uShellAt) * uShellAt * uShellLen / max(restScale, 1e-6);`
+            : ""
+        }
 \tvLook = aLook;
 \tvLook2 = aLook2;
 \ttransformed = (bakeSkin * vec4(transformed, 1.0)).xyz;`,
       );
+    if (shell)
+      shader.vertexShader = shader.vertexShader.replace(
+        "#include <common>",
+        "#include <common>\nuniform float uShellAt;\nuniform float uShellLen;",
+      );
     if (shader.fragmentShader.includes("#include <map_fragment>"))
       shader.fragmentShader = shader.fragmentShader
-        .replace("#include <common>", `#include <common>\n${FRAG_PARS}`)
+        .replace("#include <common>", `#include <common>\n${FRAG_PARS}${shell ? SHELL_FRAG : ""}`)
         .replace(
           "#include <map_fragment>",
-          "#include <map_fragment>\n\tdiffuseColor.rgb = dinoLook(diffuseColor.rgb);",
+          `#include <map_fragment>
+\tdiffuseColor.rgb = dinoLook(diffuseColor.rgb);${
+            shell
+              ? `
+\t// One strand per little cell of the body; fewer reach the outer layers,
+\t// and none grow on the lower legs and feet.
+\tfloat strand = shellH(floor(vRest * 190.0));
+\tif (strand < uShellAt * 0.9 + 0.08 || vRest.y < uShellLegs) discard;
+\tdiffuseColor.rgb *= mix(0.62, 1.12, uShellAt);`
+              : ""
+          }`,
         );
   };
   // One program per species (each has its own bake texture bound as a uniform).
-  material.customProgramCacheKey = () => "baked-skin";
+  material.customProgramCacheKey = () => (shell ? "baked-skin-shell" : "baked-skin");
+}
+
+/** Materials for a feather coat over a loaded model: one set per layer. */
+export function coatLayers(skin: Skin, layers: number, len: number, legs: number) {
+  const list = Array.isArray(skin.materials) ? skin.materials : [skin.materials];
+  return Array.from({ length: layers }, (_, k) => {
+    const shell: Shell = { at: (k + 1) / layers, len, legs };
+    const mats = list.map((m) => {
+      const c = (m as THREE.MeshStandardMaterial).clone();
+      c.alphaTest = 0;
+      c.side = THREE.DoubleSide;
+      patch(c, skin.bake, shell);
+      return c;
+    });
+    return mats.length > 1 ? mats : mats[0];
+  });
 }
 
 const cache = new Map<string, Promise<Skin>>();
@@ -252,7 +317,7 @@ export function loadSkin(sp: string): Promise<Skin> {
       const materials: THREE.Material | THREE.Material[] = list.length > 1 ? list : list[0];
       const depth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
       patch(depth, bake);
-      return { geometry, materials, depth, meta };
+      return { geometry, materials, depth, meta, bake };
     })();
     cache.set(sp, p);
   }

@@ -17,8 +17,8 @@ import {
 } from "@/lib/island/types";
 import { MODELS, type Anim, type Geo, type Part, type Role } from "./dinoModels";
 import { heightAt, tileAtWorld } from "./palette";
-import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
-import { FORMS, pickLook } from "./dinoForms";
+import { clipRows, coatLayers, loadSkin, type ClipName, type Skin } from "./dinoSkins";
+import { COATS, FORMS, pickLook } from "./dinoForms";
 import { surgeBus } from "./Tsunami";
 import { eruptBus } from "./Eruption";
 import { dustBus } from "./fx/dust";
@@ -143,16 +143,23 @@ const WALK: Record<SpeciesId, number> = {
 const RUN = 2.6;
 
 /** Body length on screen at the species' standard size (world units). */
+/**
+ * Body length on screen at the species' standard size (world units): the
+ * real animals' lengths at one scale (about 0.19 units a metre, the same as
+ * the people): Brachiosaurus ~23 m, Triceratops ~9 m, Parasaurolophus ~9.5 m,
+ * Ankylosaurus ~7 m, Compsognathus ~1 m, T. rex ~12.5 m, Deinonychus ~3 m,
+ * Pteranodon ~1.9 m long (6 m wings), Mosasaurus ~13 m.
+ */
 const LENGTH: Record<SpeciesId, number> = {
-  titan: 4,
+  titan: 4.4,
   hornface: 1.7,
   duckbill: 1.8,
-  plateback: 1.4,
-  snapper: 0.32,
+  plateback: 1.35,
+  snapper: 0.2,
   tyrant: 2.4,
-  raptor: 0.8,
+  raptor: 0.58,
   skywing: 0.36,
-  leviathan: 5,
+  leviathan: 2.5,
 };
 /** Body lengths covered per cycle of each moving clip, so feet don't skate. */
 const TRAVEL: Partial<Record<ClipName, number>> = { walk: 0.55, run: 1.2, creep: 0.3 };
@@ -558,6 +565,16 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
     };
   }, []);
   const skinMeshes = useRef<Record<string, THREE.InstancedMesh | null>>({});
+  // Feather layers over the coated looks, drawn from the same instances.
+  const coatMeshes = useRef<Record<string, (THREE.InstancedMesh | null)[]>>({});
+  const coatMats = useMemo(() => {
+    const out: Record<string, THREE.Material[] | THREE.Material[][]> = {};
+    for (const [key, skin] of Object.entries(skins)) {
+      const c = COATS[key];
+      if (c) out[key] = coatLayers(skin, c.layers, c.len, c.legs) as THREE.Material[];
+    }
+    return out;
+  }, [skins]);
   interface SkinAttrs {
     a: THREE.InstancedBufferAttribute;
     b: THREE.InstancedBufferAttribute;
@@ -1312,6 +1329,12 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       const at = skinAttrs[key];
+      for (const layer of coatMeshes.current[key] ?? []) {
+        if (!layer) continue;
+        layer.instanceMatrix = mesh.instanceMatrix;
+        if (mesh.instanceColor) layer.instanceColor = mesh.instanceColor;
+        layer.count = n;
+      }
       for (const attr of [at.a, at.b, at.f, at.l, at.l2]) {
         attr.clearUpdateRanges();
         attr.addUpdateRange(0, n * attr.itemSize);
@@ -1342,6 +1365,20 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
           />
         );
       })}
+      {Object.entries(coatMats).flatMap(([key, layers]) =>
+        (layers as (THREE.Material | THREE.Material[])[]).map((mat, k) => (
+          <instancedMesh
+            key={`coat-${key}-${k}`}
+            ref={(r) => {
+              (coatMeshes.current[key] ??= [])[k] = r;
+              if (r) r.count = 0;
+            }}
+            args={[skinGeo(key, skins[key]), mat, SKIN_CAP]}
+            receiveShadow
+            frustumCulled={false}
+          />
+        )),
+      )}
       {SPECIES.filter((sp) => !skins[FORMS[sp][0].key]).flatMap((sp) =>
         GEOS.filter((g) => PREPARED[sp][g].length).map((g) => {
           const key = `${sp}-${g}`;

@@ -576,6 +576,59 @@ export function Waterfalls({ tiles }: { tiles: Tile[] }) {
     () =>
       new THREE.ShaderMaterial({
         vertexShader: /* glsl */ `
+uniform float uTime;
+uniform float uThrow;
+varying vec2 vUv;
+varying float vDrop;
+void main() {
+  vUv = uv;
+  vec3 p = position;
+  // Water leaves the lip moving forward and curves down: a parabola out from the rock.
+  float fall = 1.0 - uv.y;
+  p.z += uThrow * sqrt(fall) + sin(uv.x * 9.0 + uTime * 2.0) * 0.02 * fall;
+  vDrop = fall;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+}`,
+        fragmentShader: /* glsl */ `
+uniform float uTime;
+uniform float uLight;
+uniform float uSpeed;
+varying vec2 vUv;
+varying float vDrop;
+${NOISE}
+void main() {
+  // Streaks racing down, speeding up as they fall; ragged, see-through edges.
+  float v = vUv.y + uTime * uSpeed * (0.6 + vDrop);
+  float s1 = vnoise(vec2(vUv.x * 26.0, v * 2.2));
+  float s2 = vnoise(vec2(vUv.x * 60.0 + 3.0, v * 5.0));
+  float streak = s1 * 0.65 + s2 * 0.35;
+  float edge = smoothstep(0.0, 0.12, vUv.x) * smoothstep(1.0, 0.88, vUv.x);
+  float rag = vnoise(vec2(vUv.x * 7.0, v * 0.7));
+  float a = mix(0.35, 0.95, streak) * smoothstep(0.1, 0.5, edge + rag * 0.4);
+  // Glassy at the lip, white and aerated lower down.
+  vec3 glass = mix(vec3(0.2, 0.42, 0.45), vec3(0.62, 0.8, 0.84), streak);
+  vec3 col = mix(glass, vec3(0.96, 0.98, 0.98), smoothstep(0.2, 0.9, vDrop * 0.8 + streak * 0.5));
+  gl_FragColor = vec4(col * uLight, a);
+  #include <tonemapping_fragment>
+  #include <colorspace_fragment>
+}`,
+        uniforms: {
+          uTime: { value: 0 },
+          uLight: { value: 1 },
+          uSpeed: { value: 1.6 },
+          uThrow: { value: 0.25 },
+        },
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    [],
+  );
+  // The plunge pool: churning white water spreading in rings at the foot.
+  const poolMat = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        vertexShader: /* glsl */ `
 varying vec2 vUv;
 void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
         fragmentShader: /* glsl */ `
@@ -584,24 +637,33 @@ uniform float uLight;
 varying vec2 vUv;
 ${NOISE}
 void main() {
-  float streak = vnoise(vec2(vUv.x * 18.0, vUv.y * 3.0 + uTime * 3.5));
-  float a = mix(0.55, 0.95, streak);
-  vec3 col = mix(vec3(0.55, 0.72, 0.78), vec3(0.97), streak) * uLight;
-  gl_FragColor = vec4(col, a);
+  vec2 c = vUv * 2.0 - 1.0;
+  float r = length(c);
+  float ring = vnoise(vec2(r * 9.0 - uTime * 1.6, atan(c.y, c.x) * 3.0));
+  float churn = vnoise(c * 6.0 + uTime * 0.8);
+  float foam = smoothstep(0.35, 0.75, ring * 0.6 + churn * 0.5) * (1.0 - smoothstep(0.35, 1.0, r));
+  gl_FragColor = vec4(vec3(0.95) * uLight, foam * 0.85);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`,
         uniforms: { uTime: { value: 0 }, uLight: { value: 1 } },
         transparent: true,
-        side: THREE.DoubleSide,
         depthWrite: false,
       }),
     [],
   );
-  useEffect(() => () => material.dispose(), [material]);
+  useEffect(
+    () => () => {
+      material.dispose();
+      poolMat.dispose();
+    },
+    [material, poolMat],
+  );
   useFrame(({ clock }) => {
     material.uniforms.uTime.value = clock.elapsedTime;
     material.uniforms.uLight.value = 0.3 + env.daylight * 0.75;
+    poolMat.uniforms.uTime.value = clock.elapsedTime;
+    poolMat.uniforms.uLight.value = 0.3 + env.daylight * 0.75;
   });
   const clock = useMemo(() => {
     const start = performance.now();
@@ -609,26 +671,50 @@ void main() {
   }, []);
   return (
     <group>
-      {falls.map((f, k) => (
-        <group key={k} position={[f.x, 0, f.z]} rotation-y={-f.ang + Math.PI / 2}>
-          <mesh material={material} position={[0, (f.top + f.bottom) / 2, 0]}>
-            <planeGeometry args={[f.big ? 1.4 : 0.8, f.top - f.bottom]} />
-          </mesh>
-          <Puffs
-            getT={clock}
-            origin={[0, f.bottom + 0.1, 0]}
-            count={f.big ? 40 : 14}
-            duration={2.5}
-            spread={f.big ? 1.2 : 0.5}
-            rise={f.big ? 1.6 : 0.8}
-            size={f.big ? [0.5, 1.6] : [0.25, 0.7]}
-            color="#f4f8fa"
-            opacity={0.55}
-            loop
-            seed={f.seed}
-          />
-        </group>
-      ))}
+      {falls.map((f, k) => {
+        const drop = f.top - f.bottom;
+        const w = f.big ? 2.4 : 0.9;
+        return (
+          <group key={k} position={[f.x, 0, f.z]} rotation-y={-f.ang + Math.PI / 2}>
+            {/* The main curtain, and for the big falls two thinner strands beside it. */}
+            {(f.big ? [0, -1, 1] : [0]).map((side) => (
+              <mesh
+                key={side}
+                material={material}
+                position={[
+                  side * w * 0.62,
+                  (f.top + f.bottom) / 2 - (side ? drop * 0.05 : 0),
+                  side ? -0.05 : 0,
+                ]}
+                renderOrder={3}
+              >
+                <planeGeometry args={[side ? w * 0.28 : w, drop, 12, 16]} />
+              </mesh>
+            ))}
+            <mesh
+              material={poolMat}
+              position={[0, Math.max(0, f.bottom) + 0.06, 0.45 + drop * 0.08]}
+              rotation-x={-Math.PI / 2}
+              renderOrder={4}
+            >
+              <planeGeometry args={[w * 1.8, w * 1.4]} />
+            </mesh>
+            <Puffs
+              getT={clock}
+              origin={[0, f.bottom + 0.15, 0.4]}
+              count={f.big ? 80 : 16}
+              duration={f.big ? 3.5 : 2.5}
+              spread={f.big ? 2.2 : 0.5}
+              rise={f.big ? 2.8 : 0.8}
+              size={f.big ? [0.8, 2.6] : [0.25, 0.7]}
+              color="#f4f8fa"
+              opacity={f.big ? 0.5 : 0.55}
+              loop
+              seed={f.seed}
+            />
+          </group>
+        );
+      })}
     </group>
   );
 }

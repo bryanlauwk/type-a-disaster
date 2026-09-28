@@ -23,11 +23,11 @@ export const FORMS: Record<SpeciesId, Form[]> = {
   titan: [{ key: "titan", name: "Brachiosaurus", size: 1, weight: 1 }],
   hornface: [
     { key: "hornface", name: "Triceratops", size: 1, weight: 1 },
-    { key: "hornface_2", name: "Styracosaurus", size: 1, weight: 0.6 },
+    { key: "hornface_2", name: "Styracosaurus", size: 0.64, weight: 0.6 },
   ],
   duckbill: [
     { key: "duckbill", name: "Parasaurolophus", size: 1, weight: 1 },
-    { key: "duckbill_2", name: "Dryosaurus", size: 0.62, weight: 0.7 },
+    { key: "duckbill_2", name: "Dryosaurus", size: 0.34, weight: 0.7 },
   ],
   plateback: [{ key: "plateback", name: "Ankylosaurus", size: 1, weight: 1 }],
   snapper: [{ key: "snapper", name: "Compsognathus", size: 1, weight: 1 }],
@@ -36,8 +36,8 @@ export const FORMS: Record<SpeciesId, Form[]> = {
     { key: "tyrant_2", name: "Tyrannosaurus (tiger-striped)", size: 1.05, weight: 0.7 },
   ],
   raptor: [
-    { key: "raptor", name: "Velociraptor", size: 1, weight: 1 },
-    { key: "raptor_2", name: "Velociraptor (dark morph)", size: 1, weight: 0.8 },
+    { key: "raptor", name: "Deinonychus", size: 1, weight: 1 },
+    { key: "raptor_2", name: "Deinonychus (dark morph)", size: 1, weight: 0.8 },
   ],
   skywing: [
     { key: "skywing", name: "Pteranodon", size: 1, weight: 1 },
@@ -133,3 +133,17 @@ export function pickLook(sp: SpeciesId, region: string, id: number, young: boole
     build: [0.92 + h(id, 12, 7) * 0.18, 0.95 + h(id, 13, 7) * 0.1] as [number, number],
   };
 }
+
+/**
+ * Feather coats, as the fossils show them: dromaeosaurs fully feathered,
+ * little compsognathids in downy filaments, pterosaurs in short fuzz
+ * (pycnofibres). Big tyrannosaurs, hadrosaurs, ceratopsians, sauropods and
+ * ankylosaurs keep their scales.
+ */
+export const COATS: Record<string, { layers: number; len: number; legs: number }> = {
+  raptor: { layers: 6, len: 0.024, legs: 0.13 },
+  raptor_2: { layers: 6, len: 0.024, legs: 0.13 },
+  snapper: { layers: 5, len: 0.03, legs: 0.12 },
+  skywing: { layers: 3, len: 0.01, legs: -1 },
+  skywing_2: { layers: 3, len: 0.01, legs: -1 },
+};

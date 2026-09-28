@@ -235,7 +235,7 @@ export function CaveWall({ world, telling }: { world: WorldState; telling: boole
               The tribe: “Neanderthal” by gb.prof.69, CC BY 4.0. Recoloured, reposed and reanimated
               for the island. Plants: Poly Haven (CC0); “Ponga” by toAflame, “Realistic Palm Tree
               Model vol.1” by aliyeredon, “Bald Cypress” by BaptisteBerard, “Jungle Tree” by
-              kobaltsecond (CC BY 4.0). Ground: Poly Haven (CC0).
+              kobaltsecond (CC BY 4.0). Ground, rocks, ruins and textures: Poly Haven (CC0).
             </p>
           </section>
         </div>

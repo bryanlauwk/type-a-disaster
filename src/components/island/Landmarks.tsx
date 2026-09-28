@@ -60,39 +60,6 @@ function Skeleton({ seed }: { seed: number }) {
   );
 }
 
-/** Mossy ruins in the jungle that nobody on the island remembers building. */
-function Ruins({ seed }: { seed: number }) {
-  return (
-    <group rotation-y={hash(seed, 2) * Math.PI}>
-      {[1.2, 0.95, 0.7, 0.45].map((w, k) => (
-        <mesh key={k} position={[0, 0.12 + k * 0.22, 0]} castShadow receiveShadow>
-          <boxGeometry args={[w, 0.22, w]} />
-          <meshStandardMaterial color={k % 2 ? "#7c7a66" : "#6f6f5a"} roughness={0.95} />
-        </mesh>
-      ))}
-      <mesh position={[0, 1.05, 0]} castShadow>
-        <boxGeometry args={[0.28, 0.3, 0.28]} />
-        <meshStandardMaterial color="#5c6a4a" roughness={0.95} />
-      </mesh>
-      {Array.from({ length: 5 }, (_, k) => {
-        const a = (k / 5) * Math.PI * 2;
-        const h = 0.3 + hash(seed, k, 3) * 0.5;
-        return (
-          <mesh
-            key={`c${k}`}
-            position={[Math.cos(a) * 1.3, h / 2, Math.sin(a) * 1.3]}
-            rotation-z={(hash(seed, k, 4) - 0.5) * 0.4}
-            castShadow
-          >
-            <cylinderGeometry args={[0.09, 0.11, h, 7]} />
-            <meshStandardMaterial color="#8b8a74" roughness={0.9} />
-          </mesh>
-        );
-      })}
-    </group>
-  );
-}
-
 /** Glowing crystal clusters at the mouth of a cave. */
 function Crystals({ seed }: { seed: number }) {
   const ref = useRef<THREE.Group>(null);
@@ -399,9 +366,7 @@ export function Landmarks({ tiles, day, ash }: { tiles: Tile[]; day: number; ash
           case "skeleton_field":
             node = <Skeleton seed={i} />;
             break;
-          case "sunken_jungle":
-            node = <Ruins seed={i} />;
-            break;
+          // The old park's ruins are drawn with the trails (Park).
           case "crystal_caves":
             node = <Crystals seed={i} />;
             break;

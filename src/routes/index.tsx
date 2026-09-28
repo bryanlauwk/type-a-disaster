@@ -57,7 +57,12 @@ const FAST_MS = 2_500;
 const STORIED = (p: Armed["power"]) =>
   POWER_DEFS[p].dramatic || p === "introduce" || p === "evolve";
 
-const newSeed = () => Math.floor(Math.random() * 2 ** 31);
+const newSeed = () => {
+  // ?seed=N in the URL starts a fresh island from that seed (for testing).
+  const fixed =
+    typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("seed");
+  return fixed && /^\d+$/.test(fixed) ? Number(fixed) : Math.floor(Math.random() * 2 ** 31);
+};
 const compact = (n: number) =>
   n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : `${Math.round(n)}`;
 
