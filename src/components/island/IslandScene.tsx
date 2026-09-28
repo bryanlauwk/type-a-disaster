@@ -15,6 +15,7 @@ import { Dinos, lifeBus } from "./Dinos";
 import { People, Structures } from "./Settlement";
 import {
   ActCamera,
+  ActLight,
   ActSpectacle,
   Shaker,
   TileFires,
@@ -24,6 +25,8 @@ import {
 } from "./Acts";
 import { heightAt } from "./palette";
 import { PhotoSky } from "./fx/PhotoSky";
+import { eruptBus } from "./Eruption";
+import { FORMS } from "./dinoForms";
 import { PostFX } from "./fx/PostFX";
 import { LabelOverlay, LabelProjector, type LabelRegistry, type LabelSpec } from "./fx/Labels";
 
@@ -35,7 +38,7 @@ export interface SimClock {
   paused: boolean;
 }
 
-const OPENING_CAMERA: [number, number, number] = [50, 84, 96];
+const OPENING_CAMERA: [number, number, number] = [34, 104, 104];
 
 /** Tall phone screens need to stand further back to see the whole island. */
 function openingCamera(): [number, number, number] {
@@ -72,7 +75,8 @@ function CameraBounds() {
     const t = controls.target;
     const r = Math.hypot(t.x, t.z);
     if (r > HALF - 4) t.multiplyScalar((HALF - 4) / r);
-    t.y = Math.max(0, Math.min(8, t.y));
+    // An eruption's column needs the camera to look up.
+    t.y = Math.max(0, Math.min(eruptBus.active ? 30 : 8, t.y));
   });
   return null;
 }
@@ -107,7 +111,9 @@ function LookAt({ sp }: { sp: string }) {
   const camera = useThree((st) => st.camera);
   const dist = Number(new URLSearchParams(window.location.search).get("dist") || 0);
   useFrame(() => {
-    const a = lifeBus.agents.find((o) => o.sp === sp && o.state !== "dead" && !o.young);
+    const a = lifeBus.agents.find(
+      (o) => (o.sp === sp || FORMS[o.sp][o.form].key === sp) && o.state !== "dead" && !o.young,
+    );
     if (!a || !controls) return;
     const d = dist || 6;
     controls.target.set(a.x, a.y + 0.6, a.z);
@@ -199,6 +205,16 @@ function IslandScene({
     [w.rain, w.storm, w.ash, w.drought, world.day, act],
   );
   const dry = seasonOf(world.day) === "dry" && world.day % 40 > 24;
+  // While a tsunami plays, its own surge is drawn by the act.
+  const floodShown = useMemo(
+    () => (act?.record.power === "tsunami" ? new Set(act.record.impact?.tiles ?? []) : undefined),
+    [act],
+  );
+  // While an eruption plays, its own lava is drawn by the act.
+  const lavaShown = useMemo(
+    () => (act?.record.power === "eruption" ? new Set(act.record.impact?.tiles ?? []) : undefined),
+    [act],
+  );
 
   const registry = useRef<LabelRegistry>(new Map());
   const baseLabels = useMemo<LabelSpec[]>(() => {
@@ -259,8 +275,8 @@ function IslandScene({
         <Shaker shake={shake}>
           <Terrain tiles={world.tiles} onPick={onPick} onHover={onHover} dry={dry} />
           <Sea tiles={world.tiles} />
-          <FreshWater tiles={world.tiles} />
-          <Lava tiles={world.tiles} />
+          <FreshWater tiles={world.tiles} except={floodShown} />
+          <Lava tiles={world.tiles} except={lavaShown} />
           <Waterfalls tiles={world.tiles} />
           {!noVeg && <Vegetation tiles={world.tiles} dry={dry} />}
           <Landmarks tiles={world.tiles} day={world.day} ash={w.ash > 0} />
@@ -268,6 +284,7 @@ function IslandScene({
           <People world={world} />
           <Dinos world={world} getPhase={getPhase} />
           <TileFires tiles={world.tiles} />
+          <ActLight />
           {act && reveal && (
             <ActSpectacle
               key={act.id}
@@ -291,7 +308,7 @@ function IslandScene({
           maxDistance={230}
           maxPolarAngle={1.35}
           minPolarAngle={0.2}
-          target={[0, 0, 2]}
+          target={[0, 0, -6]}
         />
         <CameraBounds />
         <LabelProjector specs={baseLabels} registry={registry} />

@@ -224,85 +224,104 @@ void main() {
   // Churned up with sand and mud.
   // Silt-laden water: brown and khaki swirls, with the sky caught in it.
   float swirl = vn(vWorld.xz * 0.25 - flow * 0.2) * 0.6 + vn(vWorld.xz * 0.9 - flow * 0.6) * 0.4;
-  vec3 col = mix(vec3(0.24, 0.2, 0.13), vec3(0.5, 0.44, 0.31), swirl);
+  vec3 col = mix(vec3(0.17, 0.14, 0.09), vec3(0.4, 0.34, 0.23), swirl);
   col = mix(col, vec3(0.26, 0.33, 0.3), smoothstep(0.55, 0.9, swirl) * 0.5);
-  col = mix(col, vec3(0.72, 0.8, 0.86), clamp(fres * 1.4 + 0.08, 0.0, 0.6));
+  col = mix(col, vec3(0.62, 0.7, 0.76), clamp(fres * 1.0 + 0.04, 0.0, 0.35));
   // White water at the leading edge, marbled foam behind it.
   float churn = vn(vWorld.xz * 1.6 - flow * 2.0) * 0.6 + vn(vWorld.xz * 4.5 - flow * 3.0) * 0.4;
   // Foam streaks drawn out along the flow.
   vec2 along = vec2(dot(vWorld.xz, uDir), dot(vWorld.xz, vec2(-uDir.y, uDir.x)));
   float streaks = vn(vec2(along.x * 0.6 - uT * 2.0, along.y * 4.0)) * 0.6 + vn(vec2(along.x * 1.5 - uT * 3.0, along.y * 9.0)) * 0.4;
-  float foam = smoothstep(0.25, 0.7, vFresh * (0.8 + churn)) + smoothstep(0.6, 0.82, streaks) * 0.45 + smoothstep(0.62, 0.85, churn) * 0.4;
+  float foam = smoothstep(0.45, 0.9, vFresh * (0.8 + churn)) + smoothstep(0.66, 0.85, streaks) * 0.35 + smoothstep(0.7, 0.9, churn) * 0.3;
   col = mix(col, vec3(0.94, 0.95, 0.93), clamp(foam, 0.0, 1.0));
   float spec = pow(max(dot(reflect(-uSun, n), view), 0.0), 240.0);
   col = col * uLight + spec * 0.35 * uLight;
   // Ragged, feathered margins rather than tile edges.
   float rag = (vn(vWorld.xz * 1.3) - 0.5) * 0.5 + (vn(vWorld.xz * 4.0) - 0.5) * 0.2;
-  gl_FragColor = vec4(col, 0.93 * smoothstep(0.02, 0.2, vLevel) * smoothstep(0.3, 0.7, vEdge + rag));
+  gl_FragColor = vec4(col, 0.93 * smoothstep(0.02, 0.2, vLevel) * smoothstep(0.38, 0.55, vEdge + rag));
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
   #include <fog_fragment>
 }`;
 
 export function surgeGeometry(tiles: Tile[], flooded: number[], plan: TsunamiPlan) {
+  // The flooded tiles blurred into a smooth sheet (3x3 vertices a tile), so
+  // the water's edge wanders over the land instead of stepping tile by tile.
   const wet = new Set(flooded);
+  const span = Math.max(1, plan.far - plan.coast);
+  const cand = new Set<number>();
+  for (const i of flooded)
+    for (let dz = -1; dz <= 1; dz++)
+      for (let dx = -1; dx <= 1; dx++)
+        if (inBounds(tx(i) + dx, ty(i) + dz)) cand.add(idx(tx(i) + dx, ty(i) + dz));
+  const S = 3;
+  const R = 0.8;
   const pos: number[] = [];
   const arrive: number[] = [];
   const ground: number[] = [];
   const depth: number[] = [];
-  const cornerWet = (cx: number, cz: number) => {
-    let n = 0;
-    for (const [dx, dz] of [
-      [-1, -1],
-      [0, -1],
-      [-1, 0],
-      [0, 0],
-    ]) {
-      const x = cx + dx;
-      const z = cz + dz;
-      if (inBounds(x, z) && wet.has(idx(x, z))) n++;
-    }
-    return n / 4;
-  };
   const edge: number[] = [];
-  const cornerArrive = (cx: number, cz: number) => {
-    let best = Infinity;
-    for (const [dx, dz] of [
-      [-1, -1],
-      [0, -1],
-      [-1, 0],
-      [0, 0],
-    ]) {
-      const x = cx + dx;
-      const z = cz + dz;
-      if (!inBounds(x, z)) continue;
-      const i = idx(x, z);
-      if (wet.has(i)) best = Math.min(best, plan.arrival(plan.alongOf(i)));
-    }
-    return Number.isFinite(best) ? best : 99;
+  const index: number[] = [];
+  const sample = (px: number, pz: number) => {
+    const fx = px + HALF - 0.5;
+    const fz = pz + HALF - 0.5;
+    const cx = Math.round(fx);
+    const cz = Math.round(fz);
+    let dens = 0;
+    let at = 0;
+    let dp = 0;
+    for (let dz = -2; dz <= 2; dz++)
+      for (let dx = -2; dx <= 2; dx++) {
+        const x = cx + dx;
+        const z = cz + dz;
+        if (!inBounds(x, z)) continue;
+        const i = idx(x, z);
+        if (!wet.has(i)) continue;
+        const k = Math.exp(-((Math.hypot(x - fx, z - fz) / R) ** 2));
+        const inland = Math.max(0, plan.alongOf(i) - plan.coast) / span;
+        dens += k;
+        at += plan.arrival(plan.alongOf(i)) * k;
+        // Deep and violent at the shore, a shallow sheet by the time it stalls.
+        dp += (0.12 + 0.55 * (1 - inland)) * k;
+      }
+    return dens > 1e-4
+      ? { dens: Math.min(1, dens), at: at / dens, depth: dp / dens }
+      : { dens: 0, at: 99, depth: 0 };
   };
-  const span = Math.max(1, plan.far - plan.coast);
-  for (const i of flooded) {
-    const x = tx(i);
-    const z = ty(i);
-    const inland = Math.max(0, plan.alongOf(i) - plan.coast) / span;
-    for (const [cx, cz] of [
-      [x, z],
-      [x + 1, z],
-      [x + 1, z + 1],
-      [x, z],
-      [x + 1, z + 1],
-      [x, z + 1],
-    ]) {
-      const px = cx - HALF;
-      const pz = cz - HALF;
-      pos.push(px, 0, pz);
-      arrive.push(cornerArrive(cx, cz));
-      ground.push(Math.max(0, heightAt(tiles, px, pz)));
-      // Deep and violent at the shore, a shallow sheet by the time it stalls.
-      depth.push(0.12 + 0.55 * (1 - inland));
-      edge.push(cornerWet(cx, cz));
+  let base = 0;
+  for (const i of cand) {
+    const x0 = tx(i) - HALF;
+    const z0 = ty(i) - HALF;
+    const first = base;
+    let any = false;
+    for (let b = 0; b <= S; b++)
+      for (let a = 0; a <= S; a++) {
+        const px = x0 + a / S;
+        const pz = z0 + b / S;
+        const f = sample(px, pz);
+        if (f.dens > 0.3) any = true;
+        pos.push(px, 0, pz);
+        arrive.push(f.at);
+        ground.push(Math.max(0, heightAt(tiles, px, pz)));
+        depth.push(f.depth);
+        edge.push(f.dens);
+        base++;
+      }
+    if (!any) {
+      const n = (S + 1) * (S + 1);
+      pos.length -= n * 3;
+      arrive.length -= n;
+      ground.length -= n;
+      depth.length -= n;
+      edge.length -= n;
+      base = first;
+      continue;
     }
+    for (let b = 0; b < S; b++)
+      for (let a = 0; a < S; a++) {
+        const v = first + b * (S + 1) + a;
+        index.push(v, v + S + 1, v + 1, v + 1, v + S + 1, v + S + 2);
+      }
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
@@ -310,6 +329,7 @@ export function surgeGeometry(tiles: Tile[], flooded: number[], plan: TsunamiPla
   g.setAttribute("aGround", new THREE.Float32BufferAttribute(ground, 1));
   g.setAttribute("aDepth", new THREE.Float32BufferAttribute(depth, 1));
   g.setAttribute("aEdge", new THREE.Float32BufferAttribute(edge, 1));
+  g.setIndex(index);
   return g;
 }
 

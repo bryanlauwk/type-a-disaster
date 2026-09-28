@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import type { SpeciesId } from "@/lib/island/types";
 import META from "./dinoSkins.meta.json";
 
 export { SKIN_CREDITS } from "./dinoCredits";
@@ -36,6 +35,8 @@ export interface ClipMeta {
   row: number;
   frames: number;
   dur: number;
+  /** Body lengths the feet carry the animal per cycle (moving clips), measured from the bake. */
+  travel?: number;
 }
 
 export interface SkinMeta {
@@ -46,7 +47,7 @@ export interface SkinMeta {
   width: number;
 }
 
-export const SKIN_META = META as unknown as Record<SpeciesId, SkinMeta>;
+export const SKIN_META = META as unknown as Record<string, SkinMeta>;
 
 export interface Skin {
   geometry: THREE.BufferGeometry;
@@ -62,6 +63,12 @@ attribute vec4 bakeWeight;
 attribute vec3 aAnimA;
 attribute vec3 aAnimB;
 attribute float aFade;
+attribute vec4 aLook;
+attribute vec4 aLook2;
+varying vec3 vRest;
+varying vec3 vRestN;
+varying vec4 vLook;
+varying vec4 vLook2;
 mat4 bakeSkin;
 mat4 bakeRow(float bone, float row) {
   int x = int(bone + 0.5) * 3;
@@ -79,12 +86,68 @@ mat4 bakeBoneAt(float bone) {
   }
   return m;
 }
+// The first baked frame: a steady, normalised body to lay patterns on.
+mat4 bakeRestMatrix() {
+  mat4 m = bakeRow(bakeBone.x, 0.0) * bakeWeight.x;
+  if (bakeWeight.y > 0.0) m += bakeRow(bakeBone.y, 0.0) * bakeWeight.y;
+  if (bakeWeight.z > 0.0) m += bakeRow(bakeBone.z, 0.0) * bakeWeight.z;
+  if (bakeWeight.w > 0.0) m += bakeRow(bakeBone.w, 0.0) * bakeWeight.w;
+  return m;
+}
 mat4 bakeSkinMatrix() {
   mat4 m = bakeBoneAt(bakeBone.x) * bakeWeight.x;
   if (bakeWeight.y > 0.0) m += bakeBoneAt(bakeBone.y) * bakeWeight.y;
   if (bakeWeight.z > 0.0) m += bakeBoneAt(bakeBone.z) * bakeWeight.z;
   if (bakeWeight.w > 0.0) m += bakeBoneAt(bakeBone.w) * bakeWeight.w;
   return m;
+}
+`;
+
+const FRAG_PARS = /* glsl */ `
+varying vec3 vRest;
+varying vec3 vRestN;
+varying vec4 vLook;
+varying vec4 vLook2;
+float lookH(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }
+float lookN(vec3 p) {
+  vec3 i = floor(p); vec3 f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(lookH(i), lookH(i + vec3(1, 0, 0)), f.x), mix(lookH(i + vec3(0, 1, 0)), lookH(i + vec3(1, 1, 0)), f.x), f.y),
+             mix(mix(lookH(i + vec3(0, 0, 1)), lookH(i + vec3(1, 0, 1)), f.x), mix(lookH(i + vec3(0, 1, 1)), lookH(i + vec3(1, 1, 1)), f.x), f.y), f.z);
+}
+// Each animal's own colouring over the model's painted skin: a shift in hue
+// and richness, darker back and paler belly, and its markings.
+vec3 dinoLook(vec3 c) {
+  mat3 toYIQ = mat3(0.299, 0.596, 0.211, 0.587, -0.274, -0.523, 0.114, -0.322, 0.312);
+  mat3 toRGB = mat3(1.0, 1.0, 1.0, 0.956, -0.272, -1.106, 0.621, -0.647, 1.703);
+  vec3 yiq = toYIQ * c;
+  float cs = cos(vLook.x);
+  float sn = sin(vLook.x);
+  yiq.yz = vec2(yiq.y * cs - yiq.z * sn, yiq.y * sn + yiq.z * cs) * vLook.y;
+  c = max(toRGB * yiq, vec3(0.0));
+  float up = vRestN.y;
+  // Countershading: sun-side dark, belly pale.
+  c *= 1.0 + vLook2.x * (0.25 * smoothstep(0.0, -0.8, up) - 0.2 * smoothstep(0.0, 0.8, up));
+  float seed = vLook2.y * 37.0;
+  float dorsal = smoothstep(-0.35, 0.5, up);
+  float kind = vLook.z;
+  float pat = 0.0;
+  vec3 q = vRest + seed;
+  if (kind > 0.5 && kind < 1.5) {
+    // Bands across the back and flanks.
+    float f = 7.0 + vLook2.z * 9.0;
+    float s = sin((vRest.z * f + lookN(q * 7.0) * 1.3) * 6.2832);
+    pat = smoothstep(0.15, 0.75, s);
+  } else if (kind > 1.5 && kind < 2.5) {
+    // Rosettes and spots.
+    float n = lookN(q * (16.0 + vLook2.z * 14.0));
+    pat = smoothstep(0.6, 0.72, n);
+  } else if (kind > 2.5) {
+    // Mottled blotches.
+    float n = lookN(q * 5.0) * 0.6 + lookN(q * 12.0) * 0.4;
+    pat = smoothstep(0.48, 0.62, n);
+  }
+  c *= 1.0 - vLook.w * 0.5 * pat * dorsal;
+  return c * vLook2.w;
 }
 `;
 
@@ -100,21 +163,35 @@ function patch(material: THREE.Material, bake: THREE.DataTexture) {
       )
       .replace(
         "#include <begin_vertex>",
-        "#include <begin_vertex>\n\ttransformed = (bakeSkin * vec4(transformed, 1.0)).xyz;",
+        `#include <begin_vertex>
+\tmat4 bakeRest = bakeRestMatrix();
+\tvRest = (bakeRest * vec4(transformed, 1.0)).xyz;
+\tvRestN = normalize(mat3(bakeRest) * normal);
+\tvLook = aLook;
+\tvLook2 = aLook2;
+\ttransformed = (bakeSkin * vec4(transformed, 1.0)).xyz;`,
       );
+    if (shader.fragmentShader.includes("#include <map_fragment>"))
+      shader.fragmentShader = shader.fragmentShader
+        .replace("#include <common>", `#include <common>\n${FRAG_PARS}`)
+        .replace(
+          "#include <map_fragment>",
+          "#include <map_fragment>\n\tdiffuseColor.rgb = dinoLook(diffuseColor.rgb);",
+        );
   };
   // One program per species (each has its own bake texture bound as a uniform).
   material.customProgramCacheKey = () => "baked-skin";
 }
 
-const cache = new Map<SpeciesId, Promise<Skin>>();
+const cache = new Map<string, Promise<Skin>>();
 
-/** Loads a species' model and its baked animations (once). */
-export function loadSkin(sp: SpeciesId): Promise<Skin> {
+/** Loads a model (a species' look) and its baked animations (once). */
+export function loadSkin(sp: string): Promise<Skin> {
   let p = cache.get(sp);
   if (!p) {
     p = (async () => {
       const meta = SKIN_META[sp];
+      if (!meta) throw new Error(`${sp}: no baked model`);
       const [gltf, bin] = await Promise.all([
         new GLTFLoader().loadAsync(`/dinos/${sp}.glb`),
         fetch(`/dinos/${sp}.anim.bin`).then((r) => {

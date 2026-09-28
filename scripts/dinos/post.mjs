@@ -5,8 +5,8 @@ import { MeshoptSimplifier } from "meshoptimizer";
 import sharp from "sharp";
 import fs from "fs";
 const io = new NodeIO().registerExtensions(ALL_EXTENSIONS);
-const TARGET = { titan: 12000, hornface: 8844, duckbill: 11000, plateback: 10000, snapper: 7000, tyrant: 5967, raptor: 7380, skywing: 5227, leviathan: 12000 };
-const ADJUST = { raptor: { hue: 28, saturation: 0.55, brightness: 0.92 }, hornface: { saturation: 0.38, brightness: 0.8, hue: -6 }, duckbill: { tint: { r: 150, g: 128, b: 88 }, brightness: 0.95 } };
+const TARGET = { titan: 12000, hornface: 8844, duckbill: 11000, plateback: 10000, snapper: 7000, tyrant: 5967, raptor: 7380, skywing: 5227, leviathan: 12000, raptor_2: 7380, hornface_2: 6264, duckbill_2: 8082, tyrant_2: 9000, skywing_2: 5227, leviathan_2: 9000 };
+const ADJUST = { raptor: { hue: 28, saturation: 0.55, brightness: 0.92 }, hornface: { saturation: 0.38, brightness: 0.8, hue: -6 }, duckbill: { tint: { r: 150, g: 128, b: 88 }, brightness: 0.95 }, hornface_2: { saturation: 0.35, brightness: 0.85, tint: { r: 138, g: 124, b: 100 } }, tyrant_2: { saturation: 0.6, brightness: 0.9, tint: { r: 128, g: 116, b: 88 } }, duckbill_2: { saturation: 0.7, brightness: 0.9 } };
 fs.mkdirSync("/tmp/claude-0/dino/final", { recursive: true });
 for (const sp of process.argv.slice(2)) {
   const doc = await io.read(`/tmp/claude-0/dino/baked/${sp}.raw.glb`);

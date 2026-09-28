@@ -20,7 +20,7 @@ import {
   type WorldState,
 } from "./types";
 
-/** Normalised island coordinates: (0, 0) is the volcano, ±1 the map edge; -v is north. */
+/** Normalised map coordinates: (0, 0) is the map's centre, ±1 its edge; -v is north. */
 const uOf = (x: number) => ((x + 0.5) / SIZE) * 2 - 1;
 const vOf = (y: number) => ((y + 0.5) / SIZE) * 2 - 1;
 const tileAt = (u: number, v: number) =>
@@ -36,102 +36,127 @@ interface RegionSpec {
   height: (seed: number, u: number, v: number) => number;
 }
 
-/** The outer ring of regions around the Fern Basin, clockwise from the north. */
+/**
+ * One big island filling the map: broad, rugged and wild in the north, where
+ * the volcano stands; open valleys, rivers and a great lake through the
+ * middle; narrowing to the south, where the tribe's harbour sits at the tip.
+ * The regions around the Fern Basin, from the north-west clockwise.
+ */
 const OUTER: RegionSpec[] = [
   {
+    // The wild north-west: crags and deep forest, no place for people.
+    id: "predator_ridge",
+    u: -0.52,
+    v: -0.58,
+    height: (s, u, v) => 1.8 + ridged(s + 9, u * 3.5, v * 3.5) * 4.2,
+  },
+  {
     id: "titan_highlands",
-    u: 0.02,
-    v: -0.6,
+    u: 0.5,
+    v: -0.56,
     height: (s, u, v) => 2.7 + fbm(s + 1, u * 4, v * 4) * 0.7,
   },
   {
     id: "misty_wetlands",
-    u: 0.55,
-    v: -0.42,
+    u: 0.66,
+    v: -0.1,
     height: (s, u, v) => 0.16 + fbm(s + 2, u * 6, v * 6) * 0.22,
   },
   {
+    // The great open valley at the island's heart.
     id: "emerald_grasslands",
-    u: 0.64,
+    u: 0.2,
     v: 0.06,
     height: (s, u, v) => 0.55 + fbm(s + 3, u * 3, v * 3) * 0.6,
   },
   {
-    id: "settlers_bay",
-    u: 0.5,
-    v: 0.5,
-    height: (s, u, v) => 0.3 + fbm(s + 4, u * 4, v * 4) * 0.25,
-  },
-  {
     id: "fertile_plains",
-    u: 0.24,
-    v: 0.36,
+    u: 0.12,
+    v: 0.42,
     height: (s, u, v) => 0.5 + fbm(s + 5, u * 3, v * 3) * 0.3,
   },
   {
+    id: "settlers_bay",
+    u: 0.2,
+    v: 0.74,
+    height: (s, u, v) => 0.3 + fbm(s + 4, u * 4, v * 4) * 0.25,
+  },
+  {
     id: "sunken_jungle",
-    u: -0.08,
-    v: 0.64,
+    u: -0.3,
+    v: 0.34,
     height: (s, u, v) => 0.35 + fbm(s + 6, u * 5, v * 5) * 0.9,
   },
   {
     id: "fossil_canyon",
-    u: -0.56,
-    v: 0.32,
+    u: -0.58,
+    v: -0.04,
     height: (s, u, v) => {
       // A high mesa cut by deep winding gorges.
       const gorge = Math.abs(noise(s + 7, u * 5, v * 5) - 0.5) * 2;
       return 2.1 + fbm(s + 8, u * 3, v * 3) * 0.4 - (1 - Math.min(1, gorge * 3.2)) * 1.7;
     },
   },
-  {
-    id: "predator_ridge",
-    u: -0.54,
-    v: -0.4,
-    height: (s, u, v) => 1.8 + ridged(s + 9, u * 3.5, v * 3.5) * 4.2,
-  },
 ];
 
-const BASIN_R = 0.38;
+/** Where the volcano stands: in the north of the island. */
+const VC: [number, number] = [0.02, -0.46];
+const fromVolcano = (u: number, v: number) => Math.hypot(u - VC[0], v - VC[1]);
+
+const BASIN_R = 0.3;
 const VOLCANO_R = 0.13;
 
 /** Where the landmarks sit, in normalised coordinates (a few are found, not placed). */
 const PLACED: Partial<Record<LandmarkId, [number, number]>> = {
-  great_volcano: [0, 0],
-  titan_valley: [0.02, -0.56],
-  migration_pass: [0.02, -0.36],
-  fern_sea: [-0.24, 0.04],
-  misty_wetlands: [0.55, -0.42],
-  fossil_canyon: [-0.56, 0.32],
-  sunken_jungle: [-0.08, 0.64],
-  skeleton_field: [-0.36, 0.14],
-  crystal_caves: [-0.66, -0.16],
-  geothermal_springs: [0.17, 0.12],
-  crater_lake: [0.3, -0.63],
-  nesting_grounds: [0.42, -0.06],
-  sacred_mountain: [0.3, 0.63],
-  coastal_lagoon: [0.76, 0.2],
+  great_volcano: VC,
+  titan_valley: [0.46, -0.42],
+  migration_pass: [0.36, -0.16],
+  fern_sea: [-0.22, -0.38],
+  misty_wetlands: [0.66, -0.1],
+  fossil_canyon: [-0.58, -0.04],
+  sunken_jungle: [-0.3, 0.34],
+  skeleton_field: [-0.4, -0.26],
+  crystal_caves: [-0.7, -0.4],
+  geothermal_springs: [0.2, -0.34],
+  crater_lake: [0.06, 0.1],
+  nesting_grounds: [0.36, 0.1],
+  sacred_mountain: [-0.1, 0.6],
+  coastal_lagoon: [0.58, 0.34],
 };
 
 /** Offshore islets: [u, v, radius, height]. The first is Dinosaur Island. */
 const ISLETS: [number, number, number, number][] = [
-  [0.84, -0.66, 0.085, 1.4],
-  [-0.9, 0.12, 0.04, 0.6],
-  [0.12, 0.95, 0.035, 0.5],
-  [-0.66, -0.82, 0.04, 0.8],
+  [0.78, 0.66, 0.075, 1.4],
+  [-0.62, 0.78, 0.04, 0.6],
+  [0.9, -0.62, 0.035, 0.5],
+  [-0.9, 0.3, 0.035, 0.8],
 ];
 
 /** Where the rivers rise on the volcano's flanks, in degrees (0 = east, 90 = south). */
-const SPRINGS = [-88, -40, 12, 52, 100, 150, 205];
+const SPRINGS = [-120, -40, 18, 62, 95, 128, 170];
 
-function coastRadius(seed: number, u: number, v: number) {
+/**
+ * The island's outline as a field: below 1 is land. Three overlapping
+ * ovals, blended smoothly: the broad northern mass, the middle, and the
+ * narrowing south. A ragged coast comes from noise.
+ */
+function shapeField(seed: number, u: number, v: number) {
+  const oval = (cx: number, cy: number, rx: number, ry: number) =>
+    Math.hypot((u - cx) / rx, (v - cy) / ry);
+  const k = 0.35;
+  const smin = (a: number, b: number) => {
+    const h = Math.max(0, Math.min(1, 0.5 + (0.5 * (b - a)) / k));
+    return b * (1 - h) + a * h - k * h * (1 - h);
+  };
+  let f = smin(oval(-0.02, -0.36, 0.82, 0.45), oval(0.04, 0.1, 0.72, 0.42));
+  f = smin(f, oval(0.12, 0.56, 0.34, 0.3));
+  // A long ragged coast with headlands and coves.
   const a = Math.atan2(v, u);
-  let r = 0.8 + (fbm(seed + 20, Math.cos(a) * 1.6 + 5, Math.sin(a) * 1.6 + 5, 3) - 0.5) * 0.18;
-  // Settler's Bay: a sheltered bite out of the south-east coast.
-  const bay = Math.atan2(0.55, 0.55);
-  const d = Math.atan2(Math.sin(a - bay), Math.cos(a - bay));
-  r -= 0.15 * Math.exp(-((d / 0.2) ** 2));
-  return r;
+  f += (fbm(seed + 20, Math.cos(a) * 1.8 + 5, Math.sin(a) * 1.8 + 5, 3) - 0.5) * 0.3;
+  f += (fbm(seed + 21, u * 7, v * 7) - 0.5) * 0.1;
+  // The harbour: a sheltered bay bitten out of the southern tip.
+  f += 0.5 * Math.exp(-((Math.hypot(u - 0.36, v - 0.72) / 0.12) ** 2));
+  return f;
 }
 
 /** Region borders wander, like real ones, instead of running dead straight. */
@@ -144,7 +169,7 @@ function warp(seed: number, u: number, v: number): [number, number] {
 
 function regionFor(seed: number, u0: number, v0: number): RegionId {
   const [u, v] = warp(seed, u0, v0);
-  const r = Math.hypot(u, v);
+  const r = fromVolcano(u, v);
   if (r < VOLCANO_R) return "volcano";
   if (r < BASIN_R) return "fern_basin";
   let best = OUTER[0];
@@ -157,7 +182,7 @@ function regionFor(seed: number, u0: number, v0: number): RegionId {
 }
 
 function baseHeight(seed: number, u: number, v: number): number {
-  const r = Math.hypot(u, v);
+  const r = fromVolcano(u, v);
   // Outer regions blend smoothly into each other.
   let sum = 0;
   let wsum = 0;
@@ -169,7 +194,7 @@ function baseHeight(seed: number, u: number, v: number): number {
   const outer = wsum > 0 ? sum / wsum : 0.5;
   const basin = 0.7 + fbm(seed + 10, u * 5, v * 5) * 0.35;
   const [wu, wv] = warp(seed, u, v);
-  const b = Math.min(1, Math.max(0, (BASIN_R + 0.06 - Math.hypot(wu, wv)) / 0.14));
+  const b = Math.min(1, Math.max(0, (BASIN_R + 0.06 - fromVolcano(wu, wv)) / 0.14));
   let h = outer * (1 - b) + basin * b;
   // The Great Volcano, with a crater at the top.
   h +=
@@ -180,7 +205,7 @@ function baseHeight(seed: number, u: number, v: number): number {
   h += (fbm(seed + 12, u * 16, v * 16) - 0.5) * (0.25 + Math.min(1, h / 4) * 0.5);
   h += (ridged(seed + 13, u * 11, v * 11) - 0.5) * Math.min(1, Math.max(0, (h - 1.2) / 3)) * 0.8;
   // Titan Valley: a long trough through the highlands down to the pass.
-  const valley = Math.exp(-(((u - 0.02) / 0.07) ** 2)) * (v < -0.3 && v > -0.85 ? 1 : 0);
+  const valley = Math.exp(-(((u - 0.46) / 0.07) ** 2)) * (v < -0.14 && v > -0.8 ? 1 : 0);
   h -= valley * 1.6;
   // The Sacred Mountain rises behind the bay.
   const sm = PLACED.sacred_mountain!;
@@ -210,8 +235,9 @@ function around(i: number): number[] {
 function traceRiver(tiles: Tile[], start: number, angle: number, seed = 0): number[] {
   // Where it wants to reach the sea.
   let target = start;
-  for (let r = 0.2; r < 1.4; r += 0.01) {
-    const i = tileAt(Math.cos(angle) * r, Math.sin(angle) * r);
+  const [ou, ov] = tiles[start] ? [uOf(tx(start)), vOf(ty(start))] : [0, 0];
+  for (let r = 0.05; r < 2; r += 0.01) {
+    const i = tileAt(ou + Math.cos(angle) * r, ov + Math.sin(angle) * r);
     target = i;
     if (tiles[i].water === SEA) break;
   }
@@ -288,10 +314,10 @@ export function generateIsland(seed: number): WorldState {
     for (let x = 0; x < SIZE; x++) {
       const u = uOf(x);
       const v = vOf(y);
-      const r = Math.hypot(u, v);
-      const coast = coastRadius(seed, u, v);
-      const land = Math.min(1, Math.max(0, (coast - r) / 0.07));
-      let h = baseHeight(seed, u, v) * land - (1 - land) * (0.4 + Math.max(0, r - coast) * 9);
+      const f = shapeField(seed, u, v);
+      const land = Math.min(1, Math.max(0, (1 - f) / 0.09));
+      let h =
+        baseHeight(seed, u, v) * land - (1 - land) * Math.min(7, 0.4 + Math.max(0, f - 1) * 12);
       let region = regionFor(seed, u, v);
       // Offshore islets.
       for (const [iu, iv, ir, ih] of ISLETS) {
@@ -338,7 +364,7 @@ export function generateIsland(seed: number): WorldState {
   // The ancient crater lake.
   const cl = PLACED.crater_lake!;
   for (let i = 0; i < tiles.length; i++)
-    if (Math.hypot(uOf(tx(i)) - cl[0], vOf(ty(i)) - cl[1]) < 0.055) tiles[i].water = LAKE;
+    if (Math.hypot(uOf(tx(i)) - cl[0], vOf(ty(i)) - cl[1]) < 0.07) tiles[i].water = LAKE;
   // Ponds: many in the wetlands, a few in the basin. They shrink in droughts.
   for (let i = 0; i < tiles.length; i++) {
     const t = tiles[i];
@@ -354,11 +380,11 @@ export function generateIsland(seed: number): WorldState {
   const rivers: number[][] = [];
   const sources: [number, number][] = SPRINGS.map((deg) => {
     const a = (deg * Math.PI) / 180;
-    return [tileAt(Math.cos(a) * 0.17, Math.sin(a) * 0.17), a];
+    return [tileAt(VC[0] + Math.cos(a) * 0.17, VC[1] + Math.sin(a) * 0.17), a];
   });
   // Highland streams that tumble off the plateau.
-  sources.push([tileAt(-0.2, -0.62), (-110 * Math.PI) / 180]);
-  sources.push([tileAt(0.14, -0.66), (-70 * Math.PI) / 180]);
+  sources.push([tileAt(0.52, -0.66), (-60 * Math.PI) / 180]);
+  sources.push([tileAt(0.62, -0.42), (20 * Math.PI) / 180]);
   for (const [start, a] of sources) {
     const path = traceRiver(tiles, start, a, seed);
     rivers.push(path);
@@ -383,7 +409,7 @@ export function generateIsland(seed: number): WorldState {
       const a = tiles[path[k]];
       const b = tiles[path[k + 1]];
       const drop = a.h - b.h;
-      const r = Math.hypot(uOf(tx(path[k])), vOf(ty(path[k])));
+      const r = fromVolcano(uOf(tx(path[k])), vOf(ty(path[k])));
       if (drop > 0.3 && r > 0.3 && a.water === RIVER) {
         a.falls = true;
         // Thunder Falls drops off the northern highlands.
@@ -400,7 +426,7 @@ export function generateIsland(seed: number): WorldState {
     const t = tiles[i];
     const u = uOf(tx(i));
     const v = vOf(ty(i));
-    const r = Math.hypot(u, v);
+    const r = fromVolcano(u, v);
     const n = fbm(seed + 50, u * 8, v * 8);
     const slope = Math.max(...around(i).map((j) => Math.abs(tiles[j].h - t.h)));
     let biome: Biome;
@@ -482,7 +508,7 @@ export function generateIsland(seed: number): WorldState {
   mark("dinosaur_island", landTileNear(tiles, tileAt(du, dv), false));
 
   // Settler's Bay: the tribe's first camp on the shore of the bay.
-  const bayCentre = tileAt(0.5, 0.5);
+  const bayCentre = tileAt(0.3, 0.7);
   const home = landTileNear(tiles, bayCentre, false, (t) => t.h < 1 && t.biome !== "cliff");
   mark("settlers_bay", home);
 
@@ -504,7 +530,7 @@ export function generateIsland(seed: number): WorldState {
   };
 
   const state: WorldState = {
-    version: 2,
+    version: 3,
     name: ISLAND_NAME,
     seed,
     rng: seed ^ 0x5bd1e995,

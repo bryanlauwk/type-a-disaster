@@ -1,18 +1,19 @@
 # Primordia
 
-A god-game on a Jurassic island. Primordia is a huge volcanic island ruled by dinosaurs, with a small tribe of primitive humans, the People of the Bay, trying to make a life on its south-east shore. The island runs itself: plants grow and burn, herds graze and migrate, hunters follow them, and the tribe fishes, farms, hunts, digs up fossils and grows from a camp into a town. You're its god. You can shape the land, send rain or drought, introduce and evolve species, guide the tribe, or unleash the volcano. The tribe's storyteller (Claude) paints what you do on the cave wall.
+A god-game on a Jurassic island. Primordia is a huge volcanic island ruled by dinosaurs, with a small tribe of primitive humans, the People of the Bay, trying to make a life at its southern tip. The island runs itself: plants grow and burn, herds graze and migrate, hunters follow them, and the tribe fishes, farms, hunts, digs up fossils and grows from a camp into a town. You're its god. You can shape the land, send rain or drought, introduce and evolve species, guide the tribe, or unleash the volcano. The tribe's storyteller (Claude) paints what you do on the cave wall.
 
 ## The island
 
-A 128×128 map generated from a seed (`src/lib/island/worldgen.ts`), with the Great Volcano at its heart and rivers running from the mountains to the sea:
+A 128×128 map generated from a seed (`src/lib/island/worldgen.ts`): one big island filling the map, broad, rugged and wild in the north, with open valleys, rivers and a great lake through the middle, narrowing to a harbour at the southern tip. Rivers run from the volcano and the highlands to the sea:
 
-- **Fern Basin** around the volcano, where the great herds graze.
-- **Titan Highlands** (north), with the Sauropod Migration Pass and Titan Valley.
-- **Predator Ridge** (north-west), home of the Tyrants and Raptors.
-- **Misty Wetlands** (north-east), **Emerald Grasslands** (east), **Settler's Bay** (south-east, the tribe's home) and the **Fertile Plains** behind it.
-- **Sunken Jungle** (south) with its forgotten ruins, and **Fossil Canyon** (south-west) with bones and tar pits.
+- **The Great Volcano** in the north, with the **Fern Basin** around its foot.
+- **Predator Ridge** (the wild north-west), home of the Tyrants and Raptors.
+- **Titan Highlands** (north-east), with Titan Valley and the Sauropod Migration Pass.
+- **Emerald Grasslands**, the open valley at the island's heart, around the Ancient Crater Lake.
+- **Misty Wetlands** (east coast), **Fossil Canyon** (west) with bones and tar pits, and the **Sunken Jungle** (south-west) with its forgotten ruins.
+- **Fertile Plains** running south to **Settler's Bay**, the tribe's harbour at the southern tip.
 - The coast, the Coastal Lagoon, and offshore islets, including Dinosaur Island.
-- 18 named landmarks, among them Thunder Falls, the Crystal Caves, the Geothermal Springs, the Ancient Crater Lake and the Sacred Mountain.
+- 18 named landmarks, among them Thunder Falls, the Crystal Caves, the Geothermal Springs and the Sacred Mountain.
 
 ## How it plays
 
@@ -37,20 +38,20 @@ A 128×128 map generated from a seed (`src/lib/island/worldgen.ts`), with the Gr
 
 ## Code map
 
-| Path | What it does |
-| --- | --- |
-| `src/lib/island/types.ts` | Regions, biomes, landmarks, species, powers, the world state |
-| `src/lib/island/worldgen.ts` | Generates the island from a seed |
-| `src/lib/island/ecology.ts` | Plants, fire, feeding, breeding, hunting, migration |
-| `src/lib/island/tribe.ts` | The tribe's day: food, building, knowledge, raids |
-| `src/lib/island/powers.ts` | The 21 god powers |
-| `src/lib/island/sim.ts` | The daily tick, acts, and replay |
-| `src/lib/island/story.ts` | What the storyteller is told, and the plain fallback record |
-| `src/lib/island/chronicle.*` | The server-side Claude call and its server function |
+| Path                                    | What it does                                                                           |
+| --------------------------------------- | -------------------------------------------------------------------------------------- |
+| `src/lib/island/types.ts`               | Regions, biomes, landmarks, species, powers, the world state                           |
+| `src/lib/island/worldgen.ts`            | Generates the island from a seed                                                       |
+| `src/lib/island/ecology.ts`             | Plants, fire, feeding, breeding, hunting, migration                                    |
+| `src/lib/island/tribe.ts`               | The tribe's day: food, building, knowledge, raids                                      |
+| `src/lib/island/powers.ts`              | The 21 god powers                                                                      |
+| `src/lib/island/sim.ts`                 | The daily tick, acts, and replay                                                       |
+| `src/lib/island/story.ts`               | What the storyteller is told, and the plain fallback record                            |
+| `src/lib/island/chronicle.*`            | The server-side Claude call and its server function                                    |
 | `src/components/island/IslandScene.tsx` | The three.js scene: terrain, water, plants, landmarks, dinosaurs, the settlement, acts |
-| `src/components/island/GodPanel.tsx` | The power picker |
-| `src/components/island/CaveWall.tsx` | The chronicle and almanac sidebar |
-| `src/routes/index.tsx` | The game page |
+| `src/components/island/GodPanel.tsx`    | The power picker                                                                       |
+| `src/components/island/CaveWall.tsx`    | The chronicle and almanac sidebar                                                      |
+| `src/routes/index.tsx`                  | The game page                                                                          |
 
 Run `npm run test` (uses Bun) for the simulation tests.
 
@@ -66,6 +67,7 @@ The dinosaurs are real 3D models, all CC BY 4.0 via Sketchfab (from the Objavers
 - Tyrants: "Tyrannosaurus Rex With Fixed Colour" by dinomaster
 - Raptors: "Velociraptor With Fixed Colour" by dinomaster
 - Skywings: "Pteranodon (with Fixed Colour)" by dinomaster
+- Second looks: "Triceratops occultatum" by Miguelangelo Rosario (Styracosaurus), "Dryosauro the isle" by Dodogamer (Dryosaurus), "Animated Tyrannosaurus Rex Dinosaur Running Loop" by LasquetiSpice (striped tyrant), "Velociraptor 1+motions" and "Pteranodon+motions" by Kapi777 (dark raptors, grey pteranodons)
 - Leviathans: "mosasaurus" by Epic_devolepment
 
 Plants are real models too, photographed from 16 angles into impostor atlases (`public/plants`, `src/components/island/impostors.ts`): Poly Haven's CC0 fir, fir sapling, island tree, fern, shrub, pachira and dead-trunk scans, plus CC BY 4.0 models from Sketchfab: "Ponga" (tree fern) by toAflame, "Realistic Palm Tree Model vol.1" by aliyeredon, "Bald Cypress" by BaptisteBerard and "Jungle Tree" by kobaltsecond6c7d6150917a4267.

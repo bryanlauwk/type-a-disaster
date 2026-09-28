@@ -46,9 +46,9 @@ export const CONFIG = {
       walk: {
         base: "C4D",
         at: 0,
-        dur: 1.4,
+        dur: 1.2,
         mods: [
-          ...legs(/^l_leg/, /^r_leg/, /^l_knee/, /^r_knee/, 0.38, 0.35),
+          ...legs(/^l_leg/, /^r_leg/, /^l_knee/, /^r_knee/, 0.55, 0.5),
           { bones: /^c_tail[1-3]/, axis: "y", amp: 0.06, freq: 1, phase: 0 },
           { bones: /^c_neck1/, axis: "x", amp: 0.04, freq: 2, phase: 0 },
         ],
@@ -164,6 +164,115 @@ export const CONFIG = {
     ref: "Animation",
     clips: {
       swim: { src: "Animation", fps: 8, max: 110 },
+    },
+  },
+
+  // --- Second looks: related animals that fill the same place on the island ---
+  hornface_2: {
+    // Triceratops, a different animal and sculpt: rougher hide, heavier frill.
+    file: "d8b6a381",
+    turn: -PI / 2,
+    ref: "Walk",
+    clips: {
+      walk: { src: "Walk" },
+      run: { src: "Run" },
+      idle: { src: "Idle" },
+      graze: { src: "NoseDirt", fps: 10 },
+      roar: { src: "Attack" },
+    },
+  },
+  tyrant_2: {
+    // A heavier, striped tyrannosaur; its walk is built from its idle pose.
+    file: "38007d94",
+    ref: "idle",
+    clips: {
+      idle: { src: "idle", fps: 10 },
+      run: { src: "run", fps: 12 },
+      walk: {
+        base: "idle",
+        at: 0,
+        dur: 1.6,
+        mods: [
+          ...legs(/^bn_LeftUpLeg\./, /^bn_RightUpLeg\./, /^bn_LeftLeg\./, /^bn_RightLeg\./, 0.34, 0.38),
+          { bones: /^bn_Tail0[1-4]/, axis: "y", amp: 0.05, freq: 1, phase: 0 },
+          { bones: /^bn_Spine\./, axis: "z", amp: 0.03, freq: 1, phase: 0 },
+          { bones: /^bn_Neck\./, axis: "x", amp: 0.03, freq: 2, phase: 0.5 },
+        ],
+      },
+      roar: { src: "roar", fps: 12 },
+      attack: { src: "bite", fps: 12 },
+      tail: { src: "attack_tail", fps: 12 },
+    },
+  },
+  duckbill_2: {
+    // Dryosaurus: a smaller, quicker plant-eater that runs with the herds.
+    file: "0e078b56",
+    ref: "C4D",
+    clips: {
+      idle: { src: "C4D" },
+      walk: {
+        base: "C4D",
+        at: 0,
+        dur: 0.9,
+        mods: [
+          ...legs(/^DinoLeftThigh/, /^DinoRightThigh/, /^DinoLeftCalf/, /^DinoRightCalf/, 0.42, 0.42),
+          { bones: /^DinoTail0[1-3]/, axis: "y", amp: 0.06, freq: 1, phase: 0 },
+          { bones: /^DinoSpine06/, axis: "x", amp: 0.04, freq: 2, phase: 0 },
+        ],
+      },
+      run: {
+        base: "C4D",
+        at: 0,
+        dur: 0.5,
+        mods: [
+          ...legs(/^DinoLeftThigh/, /^DinoRightThigh/, /^DinoLeftCalf/, /^DinoRightCalf/, 0.7, 0.65),
+          { bones: /^DinoTail0[1-3]/, axis: "y", amp: 0.07, freq: 1, phase: 0 },
+          { bones: /^DinoSpine01/, axis: "x", amp: 0.05, freq: 2, phase: 0 },
+        ],
+      },
+      graze: {
+        base: "C4D",
+        dur: 2.4,
+        mods: [
+          { bones: /^DinoSpine0[12]/, axis: "x", amp: 0, offset: 0.22 },
+          { bones: /^DinoSpine0[56]/, axis: "x", amp: 0.08, freq: 2, offset: 0.3 },
+          { bones: /^DinoHead/, axis: "x", amp: 0.14, freq: 3, offset: 0.2 },
+          { bones: /^DinoJaw/, axis: "x", amp: 0.1, freq: 6, offset: 0.08 },
+        ],
+      },
+    },
+  },
+  raptor_2: {
+    // The same raptor in its original, darker spotted hide.
+    file: "9d724458",
+    ref: "loopWalk",
+    clips: {
+      walk: { src: "loopWalk" },
+      run: { src: "loopRun" },
+      idle: { src: "loopIdle" },
+      look: { src: "loopLookRound" },
+      eat: { src: "loopEating" },
+      attack: { src: "loopJumpAtackLegsHead" },
+      creep: { src: "loopCreeping" },
+    },
+  },
+  skywing_2: {
+    file: "6802359b",
+    ref: "loopSoaring",
+    clips: {
+      fly: { src: "loopFlying" },
+      glide: { src: "loopSoaring" },
+      idle: { src: "loopIdle01" },
+      walk: { src: "loopWalk" },
+      eat: { src: "loopEating" },
+    },
+  },
+  leviathan_2: {
+    // A long-necked pistosaur, hunting the shallows.
+    file: "77366757",
+    ref: "SwimmingBiting",
+    clips: {
+      swim: { src: "SwimmingBiting", fps: 12 },
     },
   },
 };
