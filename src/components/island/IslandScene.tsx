@@ -29,6 +29,8 @@ import { eruptBus } from "./Eruption";
 import { FORMS } from "./dinoForms";
 import { Zones, restrictedMarker } from "./Zones";
 import { Surroundings } from "./Surroundings";
+import { Park, parkLayout } from "./Park";
+import { PropField, naturePlacements } from "./Props";
 import { DustPool } from "./fx/dust";
 import { env } from "./fx/env";
 import { PostFX } from "./fx/PostFX";
@@ -177,7 +179,7 @@ function LookAt({ sp }: { sp: string }) {
     );
     if (!a || !controls) return;
     const d = dist || 6;
-    controls.target.set(a.x, a.y + 0.6, a.z);
+    controls.target.set(a.x, a.y + Math.min(0.6, d * 0.08), a.z);
     const h = Number(new URLSearchParams(window.location.search).get("h") || 0.45);
     camera.position.set(a.x + d * 0.8, a.y + d * h, a.z + d * 0.6);
     controls.update();
@@ -320,6 +322,17 @@ function IslandScene({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [world.seed]);
 
+  // The trails, the old park and the rocks only change when the ground itself does.
+  let groundKey = world.seed;
+  for (let i = 0; i < world.tiles.length; i += 7)
+    groundKey =
+      (groundKey * 31 + Math.round(world.tiles[i].h * 20) + (world.tiles[i].lava ? 7 : 0)) | 0;
+  const park = useMemo(() => parkLayout(world.tiles), [groundKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const nature = useMemo(
+    () => naturePlacements(world.tiles, world.seed, park.clear),
+    [park], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
   return (
     <div className="relative h-full w-full">
       <Canvas
@@ -349,7 +362,7 @@ function IslandScene({
           <FreshWater tiles={world.tiles} except={floodShown} />
           <Lava tiles={world.tiles} except={lavaShown} />
           <Waterfalls tiles={world.tiles} />
-          {!noVeg && <Vegetation tiles={world.tiles} dry={dry} />}
+          {!noVeg && <Vegetation tiles={world.tiles} dry={dry} clear={park.clear} />}
           <Landmarks tiles={world.tiles} day={world.day} ash={w.ash > 0} />
           <Structures world={world} />
           <People world={world} />
@@ -357,6 +370,8 @@ function IslandScene({
           <TileFires tiles={world.tiles} />
           <Zones tiles={world.tiles} show={showLabels} />
           <Surroundings tiles={world.tiles} seed={world.seed} />
+          <PropField placements={nature} />
+          <Park tiles={world.tiles} layout={park} />
           <DustPool />
           <ActLight />
           {act && reveal && (

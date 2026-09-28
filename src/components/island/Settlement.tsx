@@ -23,7 +23,7 @@ import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
 import { seaHeightAt } from "./Waters";
 
 /** Buildings are drawn this much bigger than their sketch, so people fit them. */
-const BUILD_SCALE = 1.7;
+const BUILD_SCALE = 2.6;
 
 type Geo = "box" | "cyl" | "cone" | "sphere" | "torus";
 interface KitPart {
@@ -80,7 +80,7 @@ function kit(kind: StructureKind, i: number, tiles: Tile[], dry: boolean): KitPa
         parts.push({
           geo: "box",
           p: [(hash(i, k, 21) - 0.5) * 0.02, deck + (hash(i, k, 22) - 0.5) * 0.01, z],
-          s: [0.3 + (hash(i, k, 23) - 0.5) * 0.04, 0.022, 0.15],
+          s: [0.44 + (hash(i, k, 23) - 0.5) * 0.05, 0.026, 0.17],
           r: [0, (hash(i, k, 24) - 0.5) * 0.08, 0],
           color: k % 3 ? WOOD : DARK_WOOD,
         });
@@ -88,7 +88,7 @@ function kit(kind: StructureKind, i: number, tiles: Tile[], dry: boolean): KitPa
       for (const sx of [-1, 1])
         parts.push({
           geo: "box",
-          p: [sx * 0.11, deck - 0.03, DOCK_LEN / 2 + 0.1],
+          p: [sx * 0.16, deck - 0.03, DOCK_LEN / 2 + 0.1],
           s: [0.035, 0.035, DOCK_LEN - 0.1],
           color: DARK_WOOD,
         });
@@ -96,7 +96,7 @@ function kit(kind: StructureKind, i: number, tiles: Tile[], dry: boolean): KitPa
         for (const sx of [-1, 1])
           parts.push({
             geo: "cyl",
-            p: [sx * 0.15, deck - 0.45, (k / 4) * DOCK_LEN],
+            p: [sx * 0.22, deck - 0.45, (k / 4) * DOCK_LEN],
             s: [0.035, 1.0, 0.035],
             r: [(hash(i, k * 3 + sx, 25) - 0.5) * 0.08, 0, (hash(i, k * 3 + sx, 26) - 0.5) * 0.08],
             color: DARK_WOOD,
@@ -516,7 +516,7 @@ interface Canoe {
 
 const SKIN = ["#8a5a3a", "#a4704a", "#6f4428", "#b98458"];
 /** How tall a grown person stands (world units; a tile is about five metres). */
-const PERSON_H = 0.2;
+const PERSON_H = 0.32;
 const PEOPLE_CAP = 120;
 const CLOTH = ["#9a7a4a", "#6f5a3a", "#b5452d", "#c9ad7e"];
 

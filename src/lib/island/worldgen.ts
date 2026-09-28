@@ -1,3 +1,4 @@
+import { flatSpot, levelSite, trailNetwork } from "./park";
 import { fbm, hash, noise, ridged } from "./rng";
 import {
   HALF,
@@ -404,6 +405,8 @@ export function generateIsland(seed: number): WorldState {
   // Rivers sit a little below their banks, and waterfalls mark the big drops.
   let falls = -1;
   let fallsDrop = 0;
+  let fallsPath: number[] = [];
+  let fallsAt = 0;
   for (const path of rivers)
     for (let k = 0; k < path.length - 1; k++) {
       const a = tiles[path[k]];
@@ -416,9 +419,43 @@ export function generateIsland(seed: number): WorldState {
         const high =
           tiles[path[k]].region === "titan_highlands" || tiles[path[k]].region === "predator_ridge";
         const score = drop + (high ? 2 : 0);
-        if (score > fallsDrop) [falls, fallsDrop] = [path[k], score];
+        if (score > fallsDrop) {
+          [falls, fallsDrop] = [path[k], score];
+          fallsPath = path;
+          fallsAt = k;
+        }
       }
     }
+  // Below Thunder Falls the river has cut a deep gorge, down to near sea level.
+  if (falls >= 0) {
+    const cut = 1.5;
+    const lowered = new Map<number, number>();
+    for (let k = fallsAt + 1; k < fallsPath.length; k++) {
+      const t = tiles[fallsPath[k]];
+      if (t.water !== RIVER) break;
+      const h = Math.max(Math.min(t.h, 0.08), t.h - cut);
+      if (h >= t.h) break;
+      t.h = h;
+      lowered.set(fallsPath[k], h);
+    }
+    const above = new Set(fallsPath.slice(0, fallsAt + 1));
+    // And the lip stands higher: the river runs flat across a rock shelf to the edge.
+    const lip = tiles[falls].h + 1.1;
+    for (let k = fallsAt; k >= Math.max(0, fallsAt - 5); k--) {
+      const i = fallsPath[k];
+      tiles[i].h = Math.max(tiles[i].h, lip);
+      for (const n of around(i)) {
+        const t = tiles[n];
+        if (lowered.has(n) || fallsPath.indexOf(n) > fallsAt) continue;
+        if (t.water === RIVER) t.h = Math.max(t.h, lip);
+        else if (!t.water) t.h = Math.max(t.h, lip + 0.15);
+      }
+    }
+    for (const [i, h] of lowered)
+      for (const n of around(i))
+        if (tiles[n].water === RIVER && !lowered.has(n) && !above.has(n))
+          tiles[n].h = Math.min(tiles[n].h, h + 0.02);
+  }
 
   // Biomes and cover.
   const nearSea = (i: number) => around(i).some((n) => tiles[n].water === SEA);
@@ -511,6 +548,17 @@ export function generateIsland(seed: number): WorldState {
   const bayCentre = tileAt(0.3, 0.7);
   const home = landTileNear(tiles, bayCentre, false, (t) => t.h < 1 && t.biome !== "cliff");
   mark("settlers_bay", home);
+
+  // The old park: its yard on the flattest dry ground near the heart of the jungle.
+  const sj = tiles.findIndex((t) => t.landmark === "sunken_jungle");
+  if (sj >= 0) {
+    delete tiles[sj].landmark;
+    const site = flatSpot(tiles, sj);
+    mark("sunken_jungle", site);
+    levelSite(tiles, site);
+  }
+  // Trails worn through the trees from the tribe's home.
+  for (const tr of trailNetwork(tiles).trails) for (const i of tr.tiles) tiles[i].forest *= 0.35;
 
   const pop = Object.fromEntries(SPECIES.map((s) => [s, { ...START_POP[s] }])) as Pop;
 

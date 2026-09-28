@@ -60,7 +60,10 @@ interface Plant {
 }
 
 /** What grows on a tile, decided by its biome, cover and a stable hash. */
-function plantsOn(t: Tile, i: number, out: Plant[]) {
+/** Low plants that may grow on trails and in the old park's yard, where trees don't. */
+const LOW = new Set(["fern", "shrub", "cycad"]);
+
+function plantsOn(t: Tile, i: number, out: Plant[], open = false) {
   if (t.water || t.build || t.lava > 0 || t.biome === "lava" || t.biome === "farm") return;
   const burnt =
     t.fire > 0 ||
@@ -70,6 +73,7 @@ function plantsOn(t: Tile, i: number, out: Plant[]) {
       hash(i, 91) < 0.1);
   let k = 0;
   const put = (kind: Kind, n: number, scale = 1) => {
+    if (open && !LOW.has(kind)) return;
     // Fractional counts become a chance of one more.
     const whole = Math.floor(n) + (hash(i, 97, k) < n % 1 ? 1 : 0);
     for (let m = 0; m < whole; m++, k++) {
@@ -152,7 +156,16 @@ const tmpC = new THREE.Color();
 const UP = new THREE.Vector3(0, 1, 0);
 const DRY = new THREE.Color("#c9a95a");
 
-export function Vegetation({ tiles, dry }: { tiles: Tile[]; dry: boolean }) {
+export function Vegetation({
+  tiles,
+  dry,
+  clear,
+}: {
+  tiles: Tile[];
+  dry: boolean;
+  /** Tiles kept clear of trees (trails, the old park). */
+  clear?: Set<number>;
+}) {
   const [looks, setLooks] = useState<Partial<Record<string, Impostor>>>({});
   useEffect(() => {
     let live = true;
@@ -174,9 +187,9 @@ export function Vegetation({ tiles, dry }: { tiles: Tile[]; dry: boolean }) {
 
   const plants = useMemo(() => {
     const out: Plant[] = [];
-    tiles.forEach((t, i) => plantsOn(t, i, out));
+    tiles.forEach((t, i) => plantsOn(t, i, out, clear?.has(i)));
     return out;
-  }, [tiles]);
+  }, [tiles, clear]);
 
   useLayoutEffect(() => {
     const n: Partial<Record<Kind, number>> = {};
