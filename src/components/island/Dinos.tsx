@@ -21,6 +21,7 @@ import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
 import { FORMS, pickLook } from "./dinoForms";
 import { surgeBus } from "./Tsunami";
 import { eruptBus } from "./Eruption";
+import { dustBus } from "./fx/dust";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -96,6 +97,8 @@ export interface Agent {
   /** Fastest this animal can walk and run with its feet still gripping the ground. */
   maxWalk?: number;
   maxRun?: number;
+  /** Seconds until the next puff of dust from its feet. */
+  dust?: number;
 }
 
 /** Shared with the rest of the scene: where the dangerous animals are right now. */
@@ -994,6 +997,22 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         } else {
           a.x = nx;
           a.z = nz;
+          // A running animal kicks up dust off dry ground.
+          if (model.gait !== "fly" && model.gait !== "swim" && a.speed > walk * 1.3) {
+            a.dust = (a.dust ?? 0) - dt;
+            const dry =
+              !tile.water && !tile.flood && tile.biome !== "wetland" && tile.biome !== "mangrove";
+            if (a.dust <= 0 && dry) {
+              a.dust = 0.1 + hash(a.id, Math.floor(t * 10)) * 0.12;
+              const back = len * 0.25;
+              dustBus.emit(
+                a.x - Math.sin(a.yaw) * back + (hash(a.id, Math.floor(t * 20)) - 0.5) * len * 0.3,
+                Math.max(0, heightAt(w.tiles, a.x, a.z)),
+                a.z - Math.cos(a.yaw) * back,
+                Math.min(1.6, 0.25 + len * 0.3),
+              );
+            }
+          }
         }
       } else if (a.state === "walk" && !a.herd && model.gait !== "fly" && model.gait !== "swim") {
         a.state = SPECIES_DEFS[a.sp].diet === "plants" ? "graze" : "idle";

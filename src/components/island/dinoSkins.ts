@@ -241,9 +241,12 @@ export function loadSkin(sp: string): Promise<Skin> {
         mat.roughness = 0.8;
         mat.metalness = 0;
         mat.envMapIntensity = 0.6;
-        // Some source textures carry stray alpha: skin is always opaque.
-        mat.alphaTest = 0;
+        // Some source textures carry stray alpha: skin is always opaque. Hair
+        // and beards are cut-out cards and keep their holes.
+        const cards = /hair|beard|transparency_pbr|obj_default_transparency/i.test(mat.name);
+        mat.alphaTest = cards ? 0.5 : 0;
         mat.transparent = false;
+        if (cards) mat.side = THREE.DoubleSide;
         patch(mat, bake);
       }
       const materials: THREE.Material | THREE.Material[] = list.length > 1 ? list : list[0];

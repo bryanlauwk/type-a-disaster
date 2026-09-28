@@ -28,6 +28,8 @@ import { PhotoSky } from "./fx/PhotoSky";
 import { eruptBus } from "./Eruption";
 import { FORMS } from "./dinoForms";
 import { Zones, restrictedMarker } from "./Zones";
+import { Surroundings } from "./Surroundings";
+import { DustPool } from "./fx/dust";
 import { env } from "./fx/env";
 import { PostFX } from "./fx/PostFX";
 import { LabelOverlay, LabelProjector, type LabelRegistry, type LabelSpec } from "./fx/Labels";
@@ -354,6 +356,8 @@ function IslandScene({
           <Dinos world={world} getPhase={getPhase} />
           <TileFires tiles={world.tiles} />
           <Zones tiles={world.tiles} show={showLabels} />
+          <Surroundings tiles={world.tiles} seed={world.seed} />
+          <DustPool />
           <ActLight />
           {act && reveal && (
             <ActSpectacle
