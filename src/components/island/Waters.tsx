@@ -17,6 +17,7 @@ import {
 } from "@/lib/island/types";
 import { around } from "@/lib/island/terrain";
 import { env } from "./fx/env";
+import { lavaGeometry, lavaMaterial, tickLava } from "./Eruption";
 import { Puffs } from "./fx/vfx";
 
 const NOISE = /* glsl */ `
@@ -58,7 +59,9 @@ uniform float uNearHalf;
 float groundAt(vec2 p) {
   vec2 uv = (p + ${HALF.toFixed(1)}) / ${SIZE.toFixed(1)};
   if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0) return -6.0;
-  return texture2D(uHeight, uv).r * 16.0 - 8.0;
+  // Ease into the open ocean's depth towards the map's edge, so there's no seam.
+  vec2 e = abs(uv * 2.0 - 1.0);
+  return mix(texture2D(uHeight, uv).r * 16.0 - 8.0, -6.0, smoothstep(0.8, 0.99, max(e.x, e.y)));
 }
 vec3 gerstner(vec2 p, vec2 dir, float len, float amp, float steep, inout vec3 tang, inout vec3 bin) {
   float k = 6.2831853 / len;
@@ -164,7 +167,8 @@ void main() {
   foam = max(foam, smoothstep(0.14, 0.22, vCrest) * smoothstep(0.68, 0.85, churn) * 0.7);
   col = mix(col, vec3(0.93, 0.96, 0.96), foam * 0.9);
   col = col * uLight + uSunColor * spec * uLight;
-  float alpha = mix(0.35, 0.97, smoothstep(0.02, 1.8, depth));
+  // Deep water is opaque, so the edge of the sea bed never shows through.
+  float alpha = mix(0.35, 1.0, smoothstep(0.02, 2.2, depth));
   alpha = max(alpha, max(foam * 0.95, fres));
   gl_FragColor = vec4(col, alpha);
   #include <tonemapping_fragment>
@@ -223,7 +227,9 @@ export function Sea({ tiles }: { tiles: Tile[] }) {
           },
         ]),
         transparent: true,
-        depthWrite: false,
+        // The surface goes in the depth buffer, so the ambient-occlusion pass
+        // sees the water rather than the sea bed beneath it.
+        depthWrite: true,
         fog: true,
       }),
     [],
@@ -282,12 +288,15 @@ export function Sea({ tiles }: { tiles: Tile[] }) {
 const FRESH_VERTEX = /* glsl */ `
 attribute vec3 color;
 attribute float flow;
+attribute float edge;
 varying vec3 vColor;
 varying vec3 vWorld;
 varying float vFlow;
+varying float vEdge;
 void main() {
   vColor = color;
   vFlow = flow;
+  vEdge = edge;
   vec4 w = modelMatrix * vec4(position, 1.0);
   vWorld = w.xyz;
   gl_Position = projectionMatrix * viewMatrix * w;
@@ -302,9 +311,15 @@ uniform sampler2D uRipples;
 varying vec3 vColor;
 varying vec3 vWorld;
 varying float vFlow;
+varying float vEdge;
 ${NOISE}
 void main() {
   vec2 q = vWorld.xz;
+  // Floodwater spreads in ragged sheets, not tile squares.
+  float flood0 = step(0.3, vFlow) * step(vFlow, 0.5);
+  float rag = (vnoise(q * 1.7) - 0.5) * 0.5 + (vnoise(q * 5.0) - 0.5) * 0.2;
+  float sheet = mix(1.0, smoothstep(0.3, 0.55, vEdge + rag), flood0);
+  if (sheet < 0.01) discard;
   // Ripples dragged downstream; still water barely stirs.
   vec3 r1 = texture2D(uRipples, q * 0.35 + vec2(uTime * 0.05, uTime * 0.12) * vFlow).xyz * 2.0 - 1.0;
   vec3 r2 = texture2D(uRipples, q * 0.9 - vec2(uTime * 0.03, uTime * 0.2) * vFlow).xyz * 2.0 - 1.0;
@@ -319,7 +334,7 @@ void main() {
   vec3 col = mix(vColor, uSky, fres * mix(0.8, 0.35, flood));
   col = mix(col, vec3(0.92), foam * 0.5);
   col = col * uLight + spec * uLight * mix(1.0, 0.4, flood);
-  gl_FragColor = vec4(col, mix(mix(0.78, 0.95, fres), 0.62, flood));
+  gl_FragColor = vec4(col, mix(mix(0.78, 0.95, fres), 0.62, flood) * sheet);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -338,13 +353,16 @@ function surface(t: Tile): number {
 
 // Rivers and lakes are drawn by the ground itself (smooth banks); this mesh is
 // for water that spills over it: floods.
-const wet = (t: Tile) => t.flood > 0 && t.water !== SEA && t.water !== RIVER && t.water !== LAKE;
+const wetTile = (t: Tile) =>
+  t.flood > 0 && t.water !== SEA && t.water !== RIVER && t.water !== LAKE;
 
 /**
  * Rivers, lakes, ponds and floodwater: one mesh with a quad per wet tile,
  * corners shared so rivers run smoothly downhill.
  */
-export function FreshWater({ tiles }: { tiles: Tile[] }) {
+export function FreshWater({ tiles, except }: { tiles: Tile[]; except?: Set<number> }) {
+  // Floodwater the act on screen is drawing itself is left to it.
+  const wet = (t: Tile, i: number) => wetTile(t) && !except?.has(i);
   const geometry = useMemo(() => {
     const corner = (cx: number, cz: number) => {
       // Average surface of the wet tiles around this corner.
@@ -360,18 +378,33 @@ export function FreshWater({ tiles }: { tiles: Tile[] }) {
         const z = cz + dz;
         if (!inBounds(x, z)) continue;
         const t = tiles[idx(x, z)];
-        if (!wet(t)) continue;
+        if (!wet(t, idx(x, z))) continue;
         sum += surface(t);
         n += 1;
       }
       return n ? sum / n : 0;
     };
+    const wetShare = (cx: number, cz: number) => {
+      let n = 0;
+      for (const [dx, dz] of [
+        [-1, -1],
+        [0, -1],
+        [-1, 0],
+        [0, 0],
+      ]) {
+        const x = cx + dx;
+        const z = cz + dz;
+        if (inBounds(x, z) && wet(tiles[idx(x, z)], idx(x, z))) n++;
+      }
+      return n / 4;
+    };
     const pos: number[] = [];
     const col: number[] = [];
     const flow: number[] = [];
+    const edge: number[] = [];
     for (let i = 0; i < tiles.length; i++) {
       const t = tiles[i];
-      if (!wet(t)) continue;
+      if (!wet(t, i)) continue;
       const x = tx(i);
       const z = ty(i);
       const c =
@@ -400,15 +433,17 @@ export function FreshWater({ tiles }: { tiles: Tile[] }) {
         pos.push(cx - HALF, h(cx, cz), cz - HALF);
         col.push(c.r, c.g, c.b);
         flow.push(f);
+        edge.push(wetShare(cx, cz));
       }
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
     g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
     g.setAttribute("flow", new THREE.Float32BufferAttribute(flow, 1));
+    g.setAttribute("edge", new THREE.Float32BufferAttribute(edge, 1));
     g.computeBoundingSphere();
     return g;
-  }, [tiles]);
+  }, [tiles, except]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => geometry.dispose(), [geometry]);
   const material = useMemo(
     () =>
@@ -442,69 +477,25 @@ export function FreshWater({ tiles }: { tiles: Tile[] }) {
   return <mesh geometry={geometry} material={material} renderOrder={2} />;
 }
 
-const LAVA_FRAGMENT = /* glsl */ `
-uniform float uTime;
-varying vec3 vWorld;
-varying vec3 vColor;
-varying float vFlow;
-${NOISE}
-void main() {
-  vec2 q = vWorld.xz * 1.6;
-  float crust = vnoise(q + vec2(uTime * 0.12, -uTime * 0.08)) * 0.6 + vnoise(q * 3.0 - uTime * 0.2) * 0.4;
-  float glow = smoothstep(0.35, 0.75, crust);
-  vec3 hot = mix(vec3(1.0, 0.32, 0.05), vec3(1.0, 0.8, 0.3), vnoise(q * 5.0 + uTime));
-  vec3 col = mix(vec3(0.12, 0.07, 0.06), hot * (1.2 + vFlow), glow * (0.5 + vFlow * 0.5));
-  gl_FragColor = vec4(col, 1.0);
-  #include <tonemapping_fragment>
-  #include <colorspace_fragment>
-}`;
-
-/** Molten lava: the crater's pool and any flows still cooling. */
-export function Lava({ tiles }: { tiles: Tile[] }) {
+/** Molten lava: the crater's pool and any flows still cooling, crusting over as they do. */
+export function Lava({ tiles, except }: { tiles: Tile[]; except?: Set<number> }) {
   const geometry = useMemo(() => {
-    const pos: number[] = [];
-    const col: number[] = [];
-    const flow: number[] = [];
-    for (let i = 0; i < tiles.length; i++) {
-      const t = tiles[i];
-      if (!(t.lava > 0 || t.biome === "lava")) continue;
-      const x = wx(i);
-      const z = wz(i);
-      const y = t.h + 0.06;
-      const heat = t.biome === "lava" && t.lava === 0 ? 1 : Math.min(1, t.lava / 6);
-      for (const [dx, dz] of [
-        [-0.5, -0.5],
-        [0.5, -0.5],
-        [0.5, 0.5],
-        [-0.5, -0.5],
-        [0.5, 0.5],
-        [-0.5, 0.5],
-      ]) {
-        pos.push(x + dx * 1.04, y, z + dz * 1.04);
-        col.push(1, 0.4, 0.1);
-        flow.push(heat);
-      }
-    }
-    const g = new THREE.BufferGeometry();
-    g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-    g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-    g.setAttribute("flow", new THREE.Float32BufferAttribute(flow, 1));
-    return g;
-  }, [tiles]);
+    const cover: number[] = [];
+    tiles.forEach((t, i) => {
+      if ((t.lava > 0 || t.biome === "lava") && !except?.has(i)) cover.push(i);
+    });
+    return lavaGeometry(
+      tiles,
+      cover,
+      () => -100,
+      (i) => (tiles[i].lava === 0 ? 1 : Math.min(1, 0.25 + tiles[i].lava / 10)),
+    );
+  }, [tiles, except]);
   useEffect(() => () => geometry.dispose(), [geometry]);
-  const material = useMemo(
-    () =>
-      new THREE.ShaderMaterial({
-        vertexShader: FRESH_VERTEX,
-        fragmentShader: LAVA_FRAGMENT,
-        uniforms: { uTime: { value: 0 } },
-        side: THREE.DoubleSide,
-      }),
-    [],
-  );
+  const material = useMemo(() => lavaMaterial(), []);
   useEffect(() => () => material.dispose(), [material]);
-  useFrame(({ clock }) => (material.uniforms.uTime.value = clock.elapsedTime));
-  return <mesh geometry={geometry} material={material} />;
+  useFrame(({ clock }) => tickLava(material, clock.elapsedTime));
+  return <mesh geometry={geometry} material={material} renderOrder={1} />;
 }
 
 /** Waterfalls where rivers drop off a ledge, with mist at the foot. */

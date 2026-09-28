@@ -18,7 +18,9 @@ import {
 import { MODELS, type Anim, type Geo, type Part, type Role } from "./dinoModels";
 import { heightAt, tileAtWorld } from "./palette";
 import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";
+import { FORMS, pickLook } from "./dinoForms";
 import { surgeBus } from "./Tsunami";
+import { eruptBus } from "./Eruption";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -83,6 +85,17 @@ export interface Agent {
   young: boolean;
   /** Seconds spent carried by floodwater. */
   swept?: number;
+  /** Body tilt to lie along the ground: nose up/down, and side to side. */
+  pitch: number;
+  roll: number;
+  /** Which of the species' looks (model) this animal has, and its own colouring and build. */
+  form: number;
+  look: [number, number, number, number];
+  look2: [number, number, number, number];
+  build: [number, number];
+  /** Fastest this animal can walk and run with its feet still gripping the ground. */
+  maxWalk?: number;
+  maxRun?: number;
 }
 
 /** Shared with the rest of the scene: where the dangerous animals are right now. */
@@ -243,6 +256,11 @@ function animate(a: Agent, skin: Skin, gait: string, t: number, dt: number) {
     const next = idles[Math.floor(hash(a.id, Math.floor(t / 4)) * idles.length)];
     a.idleAs = next === "roar" && hash(a.id, Math.floor(t / 9), 5) > 0.3 ? "idle" : next;
   }
+  // A model that has just loaded may not have the clip the stand-in was playing.
+  if (!skin.meta.clips[a.clip]) {
+    a.clip = resolve(skin, a.clip);
+    a.fade = 0;
+  }
   const want = resolve(skin, wantClip(a, gait, t));
   if (want !== a.clip) {
     a.prevClip = a.clip;
@@ -252,15 +270,24 @@ function animate(a: Agent, skin: Skin, gait: string, t: number, dt: number) {
     a.clipT = want === "roar" || want === "attack" || want === "tail" ? 0 : hash(a.id, 13) * 2;
   }
   const meta = skin.meta.clips[a.clip]!;
+  const len = lengthOf(a);
+  // How fast its legs can carry it: the stride measured from the model's own
+  // walk and run, played at most a little faster than recorded.
+  const speedOf = (c: ClipName, most: number) => {
+    const m = skin.meta.clips[c];
+    const tr = m?.travel ?? TRAVEL[c];
+    return m && tr ? ((tr * len) / m.dur) * most : undefined;
+  };
+  a.maxWalk = speedOf("walk", 1.5);
+  a.maxRun = speedOf("run", 2) ?? (a.maxWalk ? a.maxWalk * 1.4 : undefined);
   let rate = 1;
-  const travel = TRAVEL[a.clip];
+  const travel = meta.travel ?? TRAVEL[a.clip];
   if (a.state === "dead") rate = 0;
   else if (travel) {
-    const len = (a.scale / SPECIES_DEFS[a.sp].size) * LENGTH[a.sp];
-    // Cycles per second that match the ground speed, kept within sensible bounds.
+    // Cycles per second that match the ground speed, so the feet don't skate.
     const natural = 1 / meta.dur;
     const cycles = a.speed / (travel * len);
-    rate = Math.min(2.2, Math.max(0.45, cycles / natural));
+    rate = Math.min(a.clip === "run" ? 2 : 1.5, Math.max(0.5, cycles / natural));
   }
   a.clipT += dt * rate;
   if (a.fade > 0) {
@@ -339,6 +366,7 @@ function spawn(world: WorldState, sp: SpeciesId, region: RegionId, herd = 0, at?
   const x = wx(i) + (hash(id, 1) - 0.5) * 0.8;
   const z = wz(i) + (hash(id, 2) - 0.5) * 0.8;
   const young = hash(id, 3) < 0.25;
+  const lk = pickLook(sp, region, id, young);
   return {
     id,
     sp,
@@ -354,8 +382,12 @@ function spawn(world: WorldState, sp: SpeciesId, region: RegionId, herd = 0, at?
     timer: hash(id, 5) * 3,
     tx: x,
     tz: z,
+    // Grown animals range from small to big old ones; youngsters are small.
     scale:
-      tuned(SPECIES_DEFS[sp], world.traits[sp]).size * (young ? 0.55 : 0.85 + hash(id, 6) * 0.3),
+      tuned(SPECIES_DEFS[sp], world.traits[sp]).size *
+      (young
+        ? 0.45 + hash(id, 6) * 0.2
+        : 0.8 + hash(id, 6) * 0.3 + (hash(id, 14) < 0.1 ? 0.15 : 0)),
     phase: 0,
     shade: 0.88 + hash(id, 8) * 0.24,
     deadFor: 0,
@@ -370,7 +402,18 @@ function spawn(world: WorldState, sp: SpeciesId, region: RegionId, herd = 0, at?
     idleAs: "idle",
     mum: null,
     young,
+    pitch: 0,
+    roll: 0,
+    form: lk.form,
+    look: lk.look,
+    look2: lk.look2,
+    build: lk.build,
   };
+}
+
+/** An animal's body length on screen. */
+function lengthOf(a: Agent) {
+  return (a.scale / SPECIES_DEFS[a.sp].size) * LENGTH[a.sp] * FORMS[a.sp][a.form].size;
 }
 
 function has(skin: Skin | undefined, c: ClipName): boolean {
@@ -399,7 +442,8 @@ function wantClip(a: Agent, gait: string, t: number): ClipName {
   if (a.state === "eat") return SPECIES_DEFS[a.sp].diet === "plants" ? "graze" : "eat";
   if (a.state === "graze" || a.state === "drink") return "graze";
   if (a.state === "nest") return "rest";
-  if (a.speed > 0.08) return a.speed > WALK[a.sp] * 1.7 ? "run" : "walk";
+  if (a.speed > 0.04)
+    return a.speed > (a.maxWalk ? a.maxWalk * 0.97 : WALK[a.sp] * 1.7) ? "run" : "walk";
   return a.idleAs;
 }
 
@@ -486,53 +530,55 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
   const prevHerds = useRef(new Map<number, Herd>());
 
   // The real models, as they arrive; until then a species keeps its sketch.
-  const [skins, setSkins] = useState<Partial<Record<SpeciesId, Skin>>>({});
+  // Each species' first look loads first, the others once those are in.
+  const [skins, setSkins] = useState<Record<string, Skin>>({});
   const skinsRef = useRef(skins);
   skinsRef.current = skins;
   useEffect(() => {
     let live = true;
-    for (const sp of SPECIES)
-      loadSkin(sp)
-        .then((skin) => live && setSkins((cur) => ({ ...cur, [sp]: skin })))
-        .catch((err) => console.warn(`Keeping the sketched ${sp}:`, err));
+    const load = (key: string) =>
+      loadSkin(key)
+        .then((skin) => live && setSkins((cur) => ({ ...cur, [key]: skin })))
+        .catch((err) => console.warn(`No model for ${key}:`, err));
+    Promise.all(SPECIES.map((sp) => load(FORMS[sp][0].key))).then(() => {
+      for (const sp of SPECIES) for (const f of FORMS[sp].slice(1)) load(f.key);
+    });
     return () => {
       live = false;
     };
   }, []);
-  const skinMeshes = useRef<Partial<Record<SpeciesId, THREE.InstancedMesh | null>>>({});
+  const skinMeshes = useRef<Record<string, THREE.InstancedMesh | null>>({});
+  interface SkinAttrs {
+    a: THREE.InstancedBufferAttribute;
+    b: THREE.InstancedBufferAttribute;
+    f: THREE.InstancedBufferAttribute;
+    l: THREE.InstancedBufferAttribute;
+    l2: THREE.InstancedBufferAttribute;
+  }
   const skinAttrs = useMemo(() => {
-    const out = {} as Record<
-      SpeciesId,
-      {
-        a: THREE.InstancedBufferAttribute;
-        b: THREE.InstancedBufferAttribute;
-        f: THREE.InstancedBufferAttribute;
-      }
-    >;
+    const out: Record<string, SkinAttrs> = {};
+    const attr = (n: number) =>
+      new THREE.InstancedBufferAttribute(new Float32Array(SKIN_CAP * n), n).setUsage(
+        THREE.DynamicDrawUsage,
+      );
     for (const sp of SPECIES)
-      out[sp] = {
-        a: new THREE.InstancedBufferAttribute(new Float32Array(SKIN_CAP * 3), 3).setUsage(
-          THREE.DynamicDrawUsage,
-        ),
-        b: new THREE.InstancedBufferAttribute(new Float32Array(SKIN_CAP * 3), 3).setUsage(
-          THREE.DynamicDrawUsage,
-        ),
-        f: new THREE.InstancedBufferAttribute(new Float32Array(SKIN_CAP), 1).setUsage(
-          THREE.DynamicDrawUsage,
-        ),
-      };
+      for (const f of FORMS[sp])
+        out[f.key] = { a: attr(3), b: attr(3), f: attr(1), l: attr(4), l2: attr(4) };
     return out;
   }, []);
-  // Each species' mesh gets its own per-animal animation attributes.
-  const skinGeoCache = useRef<Partial<Record<SpeciesId, THREE.BufferGeometry>>>({});
-  const skinGeo = (sp: SpeciesId, skin: Skin) => {
-    let g = skinGeoCache.current[sp];
+  // Each look's mesh gets its own per-animal animation and colouring attributes.
+  const skinGeoCache = useRef<Record<string, THREE.BufferGeometry>>({});
+  const skinGeo = (key: string, skin: Skin) => {
+    let g = skinGeoCache.current[key];
     if (!g) {
       g = skin.geometry.clone();
-      g.setAttribute("aAnimA", skinAttrs[sp].a);
-      g.setAttribute("aAnimB", skinAttrs[sp].b);
-      g.setAttribute("aFade", skinAttrs[sp].f);
-      skinGeoCache.current[sp] = g;
+      const at = skinAttrs[key];
+      g.setAttribute("aAnimA", at.a);
+      g.setAttribute("aAnimB", at.b);
+      g.setAttribute("aFade", at.f);
+      g.setAttribute("aLook", at.l);
+      g.setAttribute("aLook2", at.l2);
+      skinGeoCache.current[key] = g;
     }
     return g;
   };
@@ -619,12 +665,13 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         const d = Math.hypot(dx, dz);
         if (d < 0.6) a.pathAt = (a.pathAt ?? 0) + 1;
         else {
-          const step = Math.min(d, (a.runSpeed ?? 4) * dt);
+          const step = Math.min(d, Math.min(a.runSpeed ?? 4, a.maxRun ?? Infinity) * dt);
           a.x += (dx / d) * step;
           a.z += (dz / d) * step;
-          a.yaw = Math.atan2(dx, dz);
+          const turn = Math.atan2(dx, dz) - a.yaw;
+          a.yaw += Math.atan2(Math.sin(turn), Math.cos(turn)) * Math.min(1, dt * 6);
         }
-        a.speed = a.runSpeed ?? 4;
+        a.speed = Math.min(a.runSpeed ?? 4, a.maxRun ?? Infinity);
         a.phase += dt * 14;
         a.y = Math.max(0, heightAt(w.tiles, a.x, a.z));
         continue;
@@ -661,6 +708,37 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
           a.tx = a.x + pl.cos * 10;
           a.tz = a.z + pl.sin * 10;
           a.herd = 0;
+        }
+      }
+
+      // --- An eruption: run from the mountain; lava and the ash cloud kill ------
+      const eb = eruptBus;
+      if (eb.active && eb.plan && model.gait !== "fly" && model.gait !== "swim") {
+        const pl = eb.plan;
+        const ti = tileAtWorld(a.x, a.z);
+        const reached = pl.arrival.get(ti);
+        const front = eb.pyroFront(eb.t);
+        if (
+          (reached !== undefined && eb.t > reached + 0.2) ||
+          (front && Math.hypot(front.x - a.x, front.z - a.z) < 3 + a.scale * 0.5)
+        ) {
+          a.state = "dead";
+          a.deadFor = 0;
+          a.shade *= 0.28;
+          continue;
+        }
+        const dc = Math.hypot(a.x - pl.cx, a.z - pl.cz) || 1;
+        if (eb.t > 0.8 && dc < 38 && a.state !== "flee") {
+          a.state = "flee";
+          a.timer = 3 + hash(a.id, 83) * 2;
+          a.tx = pl.cx + ((a.x - pl.cx) / dc) * (dc + 16);
+          a.tz = pl.cz + ((a.z - pl.cz) / dc) * (dc + 16);
+          a.herd = 0;
+          // A bellow of alarm from the big ones.
+          if (!a.actFor && a.scale > 1 && hash(a.id, 84) < 0.4) {
+            a.act = "roar";
+            a.actFor = 1.4;
+          }
         }
       }
 
@@ -763,6 +841,7 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
               for (const o of list)
                 if (
                   o.sp === a.sp &&
+                  o.form === a.form &&
                   !o.young &&
                   o.state !== "dead" &&
                   !o.herd &&
@@ -774,7 +853,7 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
             }
             const m = a.mum;
             if (m) {
-              const len = LENGTH[a.sp];
+              const len = lengthOf(m);
               const side = hash(a.id, 22) < 0.5 ? -1 : 1;
               const fx = m.x - Math.sin(m.yaw) * len * 0.3 + Math.cos(m.yaw) * side * len * 0.35;
               const fz = m.z - Math.cos(m.yaw) * len * 0.3 - Math.sin(m.yaw) * side * len * 0.35;
@@ -858,18 +937,47 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       } else if (a.state === "hunt") a.timer -= dt;
 
       // --- Moving --------------------------------------------------------------
+      // Animals walk where they face and steer round towards where they're
+      // going, as real ones do: a big animal swings round in a wide arc, and
+      // one that needs to turn right round slows almost to a stop to do it.
       const dx = a.tx - a.x;
       const dz = a.tz - a.z;
       const dist = Math.hypot(dx, dz);
       const running = a.state === "flee" || a.state === "hunt";
-      const want =
-        a.state === "walk" || running
+      const len = lengthOf(a);
+      const acting = a.actFor > 0 && a.act !== "attack";
+      let want =
+        (a.state === "walk" || running) && !acting
           ? walk * (running ? RUN : a.herd ? 1.2 : 1) * (0.6 + a.scale * 0.15)
           : 0;
-      a.speed += (Math.min(want, dist * 2) - a.speed) * Math.min(1, dt * 3);
-      if (dist > 0.05 && a.speed > 0.01) {
-        const nx = a.x + (dx / dist) * a.speed * dt;
-        const nz = a.z + (dz / dist) * a.speed * dt;
+      // No faster than its legs can go.
+      if (model.gait !== "fly" && model.gait !== "swim") {
+        const cap = running ? a.maxRun : a.maxWalk;
+        if (cap) want = Math.min(want, cap);
+      }
+      let err = 0;
+      if (dist > 0.05) {
+        err = Math.atan2(dx, dz) - a.yaw;
+        err = Math.atan2(Math.sin(err), Math.cos(err));
+        // Turn first, then go; ease off to arrive rather than stop dead.
+        want *= Math.max(0.12, Math.cos(Math.min(Math.abs(err), 1.45)));
+        want = Math.min(want, dist * (running ? 3 : 1.4));
+      } else want = 0;
+      // Heavy bodies take a while to get going and to pull up.
+      const accel = ((want > a.speed ? 1.6 : 2.6) * walk * (running ? 2 : 1)) / (0.6 + len * 0.12);
+      a.speed += Math.max(-accel * dt, Math.min(accel * dt, want - a.speed));
+      if (want === 0 && a.speed < walk * 0.08) a.speed = 0;
+      if (model.gait === "fly" || model.gait === "swim") {
+        // Flyers and swimmers glide on: bank round smoothly.
+        a.yaw += err * Math.min(1, dt * 1.6);
+      } else {
+        // Turning rate: brisk for small animals, ponderous for giants.
+        const rate = (3.2 / (0.7 + len * 0.35)) * (running ? 1.3 : 1);
+        a.yaw += Math.max(-rate * dt, Math.min(rate * dt, err * Math.min(1, dt * 6)));
+      }
+      if (a.speed > 0.005) {
+        const nx = a.x + Math.sin(a.yaw) * a.speed * dt;
+        const nz = a.z + Math.cos(a.yaw) * a.speed * dt;
         const ti = tileAtWorld(nx, nz);
         const tile = ti >= 0 ? w.tiles[ti] : null;
         const blocked =
@@ -880,16 +988,12 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         if (blocked) {
           a.tx = a.x;
           a.tz = a.z;
+          a.speed *= 0.3;
           a.state = a.herd ? "walk" : "idle";
           a.timer = 0.5;
         } else {
           a.x = nx;
           a.z = nz;
-          const aim = Math.atan2(dx, dz);
-          let d = aim - a.yaw;
-          d = Math.atan2(Math.sin(d), Math.cos(d));
-          // Big animals turn slowly.
-          a.yaw += d * Math.min(1, dt * (5 / (1 + LENGTH[a.sp] * 0.45)));
         }
       } else if (a.state === "walk" && !a.herd && model.gait !== "fly" && model.gait !== "swim") {
         a.state = SPECIES_DEFS[a.sp].diet === "plants" ? "graze" : "idle";
@@ -897,11 +1001,64 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       }
       a.phase += dt * (2 + (a.speed * (model.gait === "fly" ? 3 : 6)) / Math.max(0.4, a.scale));
       const ground = heightAt(w.tiles, a.x, a.z);
-      if (model.gait === "fly")
+      if (model.gait === "fly") {
         a.y = Math.max(ground, 0) + 3 + Math.sin(t * 0.8 + a.id) * 0.8 + (a.id % 3);
-      else if (model.gait === "swim")
+        // Bank into turns.
+        a.roll += (-err * 0.6 - a.roll) * Math.min(1, dt * 2);
+      } else if (model.gait === "swim")
         a.y = -0.35 + Math.max(0, Math.sin(t * 0.25 + a.id)) * 0.4 - 0.1;
-      else a.y = Math.max(ground, a.state === "nest" ? ground - 0.05 : ground);
+      else {
+        // Lie along the slope: feel the ground under the chest and the hips.
+        const fx = Math.sin(a.yaw) * len * 0.35;
+        const fz = Math.cos(a.yaw) * len * 0.35;
+        const hf = Math.max(0, heightAt(w.tiles, a.x + fx, a.z + fz));
+        const hb = Math.max(0, heightAt(w.tiles, a.x - fx, a.z - fz));
+        const hl = Math.max(0, heightAt(w.tiles, a.x + fz * 0.4, a.z - fx * 0.4));
+        const hr = Math.max(0, heightAt(w.tiles, a.x - fz * 0.4, a.z + fx * 0.4));
+        const pitch = Math.atan2(hb - hf, len * 0.7) * 0.85;
+        const roll = Math.atan2(hl - hr, len * 0.28) * 0.35;
+        const k = Math.min(1, dt * 5);
+        a.pitch += (Math.max(-0.5, Math.min(0.5, pitch)) - a.pitch) * k;
+        a.roll += (Math.max(-0.2, Math.min(0.2, roll)) - a.roll) * k;
+        a.y = Math.max(Math.max(0, ground), (hf + hb) / 2) - (a.state === "nest" ? 0.05 : 0);
+      }
+    }
+    // Animals keep a body's width apart instead of walking through each other.
+    for (let i = 0; i < list.length; i++) {
+      const a = list[i];
+      if (
+        a.state === "dead" ||
+        a.path ||
+        MODELS[a.sp].gait === "fly" ||
+        MODELS[a.sp].gait === "swim"
+      )
+        continue;
+      const la = lengthOf(a);
+      for (let j = i + 1; j < list.length; j++) {
+        const b = list[j];
+        if (
+          b.state === "dead" ||
+          b.path ||
+          MODELS[b.sp].gait === "fly" ||
+          MODELS[b.sp].gait === "swim"
+        )
+          continue;
+        if (a.prey === b || b.prey === a) continue;
+        const ddx = b.x - a.x;
+        const ddz = b.z - a.z;
+        const lb = lengthOf(b);
+        const min = (la + lb) * 0.28;
+        if (Math.abs(ddx) > min || Math.abs(ddz) > min) continue;
+        const d = Math.hypot(ddx, ddz);
+        if (d >= min || d < 1e-4) continue;
+        // The lighter animal gives way more.
+        const push = ((min - d) / d) * Math.min(1, dt * 6);
+        const wa = lb / (la + lb);
+        a.x -= ddx * push * wa;
+        a.z -= ddz * push * wa;
+        b.x += ddx * push * (1 - wa);
+        b.z += ddz * push * (1 - wa);
+      }
     }
     lifeBus.hunters = hunters;
     lifeBus.agents = list;
@@ -909,30 +1066,42 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
     // --- Drawing ---------------------------------------------------------------
     const counts: Record<string, number> = {};
     const skinned = skinsRef.current;
-    const skinCount: Partial<Record<SpeciesId, number>> = {};
+    const skinCount: Record<string, number> = {};
     for (const a of list) {
       const model = MODELS[a.sp];
       const dead = a.state === "dead";
       if (dead && a.deadFor > 16) continue;
-      const skin = skinned[a.sp];
-      const mesh = skin && skinMeshes.current[a.sp];
+      // Its own look if that model is in, else the species' first.
+      let key = FORMS[a.sp][a.form].key;
+      if (!skinned[key]) key = FORMS[a.sp][0].key;
+      const skin = skinned[key];
+      const mesh = skin && skinMeshes.current[key];
       if (skin && mesh) {
-        const n = skinCount[a.sp] ?? 0;
+        const n = skinCount[key] ?? 0;
         if (n >= SKIN_CAP) continue;
-        skinCount[a.sp] = n + 1;
+        skinCount[key] = n + 1;
         animate(a, skin, model.gait, t, dt);
-        const len = (a.scale / SPECIES_DEFS[a.sp].size) * LENGTH[a.sp];
-        // The dead topple onto their side and, after a while, sink away.
-        e.set(0, a.yaw, dead ? Math.PI / 2 : 0);
+        const len = lengthOf(a);
+        // The dead keel over onto their side (not in one frame), then sink away.
+        const fall = dead ? Math.min(1, Math.max(0, a.deadFor) / 0.9) ** 2 : 0;
+        const side = hash(a.id, 31) < 0.5 ? -1 : 1;
+        e.set(
+          a.pitch * (1 - fall),
+          a.yaw,
+          a.roll * (1 - fall) + side * fall * Math.PI * 0.5,
+          "YXZ",
+        );
         q.setFromEuler(e);
         const sink = dead ? Math.max(0, a.deadFor - 10) * 0.05 * len : 0;
-        p.set(a.x, a.y + (dead ? skin.meta.width * 0.5 * len : 0) - sink, a.z);
-        s.setScalar(len);
+        p.set(a.x, a.y + fall * skin.meta.width * 0.5 * len - sink, a.z);
+        s.set(len * a.build[0], len * a.build[1], len);
         out.compose(p, q, s);
         mesh.setMatrixAt(n, out);
         c.setScalar(a.shade);
         mesh.setColorAt(n, c);
-        const at = skinAttrs[a.sp];
+        const at = skinAttrs[key];
+        at.l.setXYZW(n, ...a.look);
+        at.l2.setXYZW(n, ...a.look2);
         const clipA = skin.meta.clips[a.clip]!;
         clipRows(clipA, a.clipT, v3);
         at.a.setXYZ(n, v3.x, v3.y, v3.z);
@@ -980,15 +1149,14 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-    for (const sp of SPECIES) {
-      const mesh = skinMeshes.current[sp];
+    for (const [key, mesh] of Object.entries(skinMeshes.current)) {
       if (!mesh) continue;
-      const n = skinCount[sp] ?? 0;
+      const n = skinCount[key] ?? 0;
       mesh.count = n;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      const at = skinAttrs[sp];
-      for (const attr of [at.a, at.b, at.f]) {
+      const at = skinAttrs[key];
+      for (const attr of [at.a, at.b, at.f, at.l, at.l2]) {
         attr.clearUpdateRanges();
         attr.addUpdateRange(0, n * attr.itemSize);
         attr.needsUpdate = true;
@@ -998,15 +1166,13 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
 
   return (
     <group>
-      {SPECIES.map((sp) => {
-        const skin = skins[sp];
-        if (!skin) return null;
-        const g = skinGeo(sp, skin);
+      {Object.entries(skins).map(([key, skin]) => {
+        const g = skinGeo(key, skin);
         return (
           <instancedMesh
-            key={`skin-${sp}`}
+            key={`skin-${key}`}
             ref={(r) => {
-              skinMeshes.current[sp] = r;
+              skinMeshes.current[key] = r;
               if (r) {
                 r.setColorAt(0, c.set("#ffffff"));
                 r.count = 0;
@@ -1020,7 +1186,7 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
           />
         );
       })}
-      {SPECIES.filter((sp) => !skins[sp]).flatMap((sp) =>
+      {SPECIES.filter((sp) => !skins[FORMS[sp][0].key]).flatMap((sp) =>
         GEOS.filter((g) => PREPARED[sp][g].length).map((g) => {
           const key = `${sp}-${g}`;
           return (

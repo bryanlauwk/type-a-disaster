@@ -239,7 +239,7 @@ export interface Notice {
 }
 
 export interface WorldState {
-  version: 2;
+  version: 3;
   name: string;
   seed: number;
   rng: number;

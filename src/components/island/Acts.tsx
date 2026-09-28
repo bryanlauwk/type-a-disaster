@@ -7,6 +7,9 @@ import { heightAt } from "./palette";
 import { lifeBus } from "./Dinos";
 import { Puffs } from "./fx/vfx";
 import { TsunamiSpectacle, tsunamiPlan } from "./Tsunami";
+import { EruptionSpectacle, eruptionPlan } from "./Eruption";
+import { env } from "./fx/env";
+import { around } from "@/lib/island/terrain";
 
 /** A god's act being played out on screen. */
 export interface ActRun {
@@ -47,13 +50,20 @@ export function planReveal(run: ActRun): TileReveal[] {
       changed.push(i);
   }
   const tsu = record.power === "tsunami" && impact ? tsunamiPlan(before, record) : null;
+  const lava = record.power === "eruption" ? eruptionPlan(before, record) : null;
   const order = new Map<number, number>();
   (impact?.tiles ?? []).forEach((i, k) => order.set(i, k));
   const at = (i: number): number => {
     const k = order.get(i);
     switch (record.power) {
-      case "eruption":
-        return 1.8 + (k ?? 20) * 0.05;
+      case "eruption": {
+        const a = lava?.arrival.get(i);
+        if (a !== undefined) return a;
+        // Forest catching fire beside the lava goes up just after it arrives.
+        let near = Infinity;
+        for (const n of around(i)) near = Math.min(near, lava?.arrival.get(n) ?? Infinity);
+        return Number.isFinite(near) ? near + 0.6 : 3;
+      }
       case "meteor":
         return 2.1 + dist(i, record.tile) * 0.08;
       case "tsunami":
@@ -79,13 +89,6 @@ export function planReveal(run: ActRun): TileReveal[] {
 }
 
 export const actLength = (reveal: TileReveal[]) => (reveal.at(-1)?.at ?? 1) + TAIL;
-
-const tmpM = new THREE.Matrix4();
-const tmpQ = new THREE.Quaternion();
-const tmpP = new THREE.Vector3();
-const tmpS = new THREE.Vector3();
-const tmpE = new THREE.Euler();
-const HIDDEN = new THREE.Matrix4().makeScale(0, 0, 0);
 
 /** A fireball out of the sky. */
 function Meteor({ x, z, y, getT }: { x: number; z: number; y: number; getT: () => number }) {
@@ -189,81 +192,6 @@ function Shock({
   );
 }
 
-/** The volcano throws out burning rocks while the lava runs. */
-function Eruption({ tiles, getT }: { tiles: Tile[]; getT: () => number }) {
-  const crater = tiles.findIndex((t) => t.landmark === "great_volcano");
-  const x = wx(crater);
-  const z = wz(crater);
-  const y = tiles[crater].h;
-  const bombs = useRef<THREE.InstancedMesh>(null);
-  const shots = useMemo(
-    () =>
-      Array.from({ length: 36 }, (_, k) => ({
-        a: hash(k, 1) * Math.PI * 2,
-        v: 4 + hash(k, 2) * 6,
-        up: 9 + hash(k, 3) * 7,
-        t0: 1 + hash(k, 4) * 4,
-      })),
-    [],
-  );
-  useFrame(() => {
-    const t = getT();
-    const m = bombs.current;
-    if (!m) return;
-    shots.forEach((s, k) => {
-      const lt = t - s.t0;
-      if (lt < 0 || lt > 2.2) {
-        m.setMatrixAt(k, HIDDEN);
-        return;
-      }
-      tmpP.set(
-        x + Math.cos(s.a) * s.v * lt,
-        y + s.up * lt - 9.8 * lt * lt * 0.5,
-        z + Math.sin(s.a) * s.v * lt,
-      );
-      tmpM.compose(tmpP, tmpQ.setFromEuler(tmpE.set(lt * 3, lt * 2, 0)), tmpS.setScalar(0.25));
-      m.setMatrixAt(k, tmpM);
-    });
-    m.instanceMatrix.needsUpdate = true;
-  });
-  return (
-    <>
-      <instancedMesh ref={bombs} args={[undefined, undefined, shots.length]} frustumCulled={false}>
-        <dodecahedronGeometry args={[1, 0]} />
-        <meshStandardMaterial color="#2a1a14" emissive="#ff5a1a" emissiveIntensity={2} />
-      </instancedMesh>
-      <Puffs
-        getT={getT}
-        origin={[x, y + 0.5, z]}
-        count={120}
-        duration={8}
-        stagger={4}
-        spread={4}
-        rise={16}
-        size={[2, 6]}
-        color="#2f2926"
-        opacity={0.85}
-        seed={7}
-      />
-      <Puffs
-        getT={getT}
-        origin={[x, y, z]}
-        count={50}
-        duration={1.4}
-        stagger={4}
-        spread={1.6}
-        rise={4}
-        size={[0.8, 2.4]}
-        color="#ff6a1a"
-        opacity={0.9}
-        additive
-        seed={8}
-      />
-    </>
-  );
-}
-
-/** The wall of water: a foaming crest running inland. */
 /** Lightning strikes where the forest catches. */
 function Storm({ run, reveal, getT }: { run: ActRun; reveal: TileReveal[]; getT: () => number }) {
   const bolt = useRef<THREE.Group>(null);
@@ -451,7 +379,9 @@ export function ActSpectacle({
   const total =
     run.record.power === "tsunami" && run.record.impact
       ? Math.max(actLength(reveal), tsunamiPlan(run.before, run.record).end)
-      : actLength(reveal);
+      : run.record.power === "eruption"
+        ? Math.max(actLength(reveal), eruptionPlan(run.before, run.record).end)
+        : actLength(reveal);
   const power = run.record.power;
   const x = wx(run.record.tile);
   const z = wz(run.record.tile);
@@ -460,10 +390,17 @@ export function ActSpectacle({
   useFrame((_, dt) => {
     if (t0.current === null) t0.current = 0;
     else elapsed.current += Math.min(dt, 0.1);
+    // Tests can hold the act at a chosen moment.
+    const pin = typeof window !== "undefined" ? (window as { __actT?: number }).__actT : undefined;
+    if (typeof pin === "number") elapsed.current = pin;
+    if (typeof window !== "undefined")
+      (window as { __act?: { t: number; power: string } }).__act = {
+        t: elapsed.current,
+        power: run.record.power,
+      };
     const t = elapsed.current;
     // Ground shaking for the violent ones.
     if (power === "earthquake" && t < 4) shake.current = Math.max(shake.current, 0.25);
-    if (power === "eruption" && t > 0.5 && t < 5) shake.current = Math.max(shake.current, 0.12);
     if (power === "meteor" && t > 2.1 && t < 2.4) {
       shake.current = 0.5;
       flash.current = 1;
@@ -488,7 +425,15 @@ export function ActSpectacle({
     case "meteor":
       return <Meteor x={x} y={y} z={z} getT={getT} />;
     case "eruption":
-      return <Eruption tiles={run.before.tiles} getT={getT} />;
+      return (
+        <EruptionSpectacle
+          before={run.before}
+          record={run.record}
+          getT={getT}
+          shake={shake}
+          flashRef={flash}
+        />
+      );
     case "tsunami":
       return (
         <TsunamiSpectacle
@@ -598,18 +543,13 @@ export function ActCamera({ run }: { run: ActRun | null }) {
   useEffect(() => {
     if (!run || !controls) return;
     const p = run.record.power;
-    // The tsunami directs its own camera.
-    if (p === "tsunami") return;
-    const focus =
-      p === "eruption"
-        ? run.before.tiles.findIndex((t) => t.landmark === "great_volcano")
-        : p === "raid"
-          ? run.before.tribe.home
-          : run.record.tile;
+    // The tsunami and the eruption direct their own camera.
+    if (p === "tsunami" || p === "eruption") return;
+    const focus = p === "raid" ? run.before.tribe.home : run.record.tile;
     const x = wx(focus);
     const z = wz(focus);
     const y = heightAt(run.before.tiles, x, z);
-    const far = p === "eruption" ? 48 : p === "storm" ? 34 : 22;
+    const far = p === "storm" ? 34 : 22;
     const toT = new THREE.Vector3(x, Math.max(0, y * 0.5), z);
     const off = camera.position.clone().sub(controls.target).normalize().multiplyScalar(far);
     off.y = Math.max(off.y, far * 0.55);
@@ -661,4 +601,16 @@ export function Shaker({
     shake.current *= Math.exp(-Math.min(dt, 0.05) * 5);
   });
   return <group ref={ref}>{children}</group>;
+}
+
+/** Firelight from a big blaze (an erupting crater), always present so lights never change count. */
+export function ActLight() {
+  const ref = useRef<THREE.PointLight>(null);
+  useFrame(() => {
+    const l = ref.current;
+    if (!l) return;
+    l.intensity = env.actLight * 60;
+    l.position.set(...env.actLightPos);
+  });
+  return <pointLight ref={ref} color="#ff6a28" distance={60} decay={1.2} intensity={0} />;
 }

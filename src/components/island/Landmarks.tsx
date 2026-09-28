@@ -6,6 +6,7 @@ import { seasonOf } from "@/lib/island/sim";
 import { wx, wz, type LandmarkId, type Tile } from "@/lib/island/types";
 import { heightAt } from "./palette";
 import { env } from "./fx/env";
+import { eruptBus } from "./Eruption";
 import { Puffs } from "./fx/vfx";
 
 const clock0 = typeof performance !== "undefined" ? performance.now() : 0;
@@ -264,40 +265,45 @@ function Lair({ seed }: { seed: number }) {
 /** The volcano's plume, and the glow of the crater at night. */
 function Plume({ ash }: { ash: boolean }) {
   const light = useRef<THREE.PointLight>(null);
+  const group = useRef<THREE.Group>(null);
   useFrame(() => {
+    // While the eruption plays, its own column takes over.
+    if (group.current) group.current.visible = !eruptBus.active;
     if (light.current)
       light.current.intensity = (env.night ? 30 : 8) * (0.85 + Math.sin(loop() * 3) * 0.15);
   });
   return (
     <group>
       <pointLight ref={light} color="#ff6a2a" distance={14} decay={1.5} position={[0, 1, 0]} />
-      <Puffs
-        getT={loop}
-        origin={[0, 0.5, 0]}
-        count={ash ? 90 : 45}
-        duration={ash ? 9 : 7}
-        spread={ash ? 3 : 1.4}
-        rise={ash ? 14 : 8}
-        size={ash ? [1.4, 5] : [0.8, 3]}
-        color={ash ? "#3e3733" : "#8c8680"}
-        opacity={ash ? 0.85 : 0.55}
-        loop
-        seed={11}
-      />
-      <Puffs
-        getT={loop}
-        origin={[0, 0.2, 0]}
-        count={16}
-        duration={1.2}
-        spread={0.6}
-        rise={1.2}
-        size={[0.3, 0.8]}
-        color="#ff7a2a"
-        opacity={0.7}
-        additive
-        loop
-        seed={12}
-      />
+      <group ref={group}>
+        <Puffs
+          getT={loop}
+          origin={[0, 0.5, 0]}
+          count={ash ? 90 : 45}
+          duration={ash ? 9 : 7}
+          spread={ash ? 3 : 1.4}
+          rise={ash ? 14 : 8}
+          size={ash ? [1.4, 5] : [0.8, 3]}
+          color={ash ? "#3e3733" : "#8c8680"}
+          opacity={ash ? 0.85 : 0.55}
+          loop
+          seed={11}
+        />
+        <Puffs
+          getT={loop}
+          origin={[0, 0.2, 0]}
+          count={16}
+          duration={1.2}
+          spread={0.6}
+          rise={1.2}
+          size={[0.3, 0.8]}
+          color="#ff7a2a"
+          opacity={0.7}
+          additive
+          loop
+          seed={12}
+        />
+      </group>
     </group>
   );
 }

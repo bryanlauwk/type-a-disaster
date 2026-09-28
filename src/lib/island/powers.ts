@@ -1,5 +1,5 @@
 import { addPop, popIn, regionBiome } from "./ecology";
-import { rand, randInt } from "./rng";
+import { noise, rand, randInt } from "./rng";
 import { HERBIVORES, SPECIES_DEFS } from "./species";
 import { around, geography, ring } from "./terrain";
 import { wreck } from "./tribe";
@@ -383,6 +383,7 @@ export function applyPower(s: WorldState, a: Action): ActionImpact {
     case "eruption": {
       const crater = s.tiles.findIndex((o) => o.landmark === "great_volcano");
       const streams = 4 + randInt(s, 3);
+      const reach = SIZE / 64;
       const flows: number[][] = [];
       for (let k = 0; k < streams; k++) {
         const ang = (k / streams) * Math.PI * 2 + rand(s) * 0.8;
@@ -390,11 +391,24 @@ export function applyPower(s: WorldState, a: Action): ActionImpact {
           Math.round(tx(crater) + Math.cos(ang) * 3),
           Math.round(ty(crater) + Math.sin(ang) * 3),
         );
-        flows.push([crater, ...downhill(s, lip, 10 + randInt(s, 8), 0.4)]);
+        const path = [crater, ...downhill(s, lip, Math.round((10 + randInt(s, 8)) * reach), 0.4)];
+        // Lower down, where the slope eases, the flow spreads into broad lobes.
+        const wide: number[] = [];
+        path.forEach((i, step) => {
+          wide.push(i);
+          if (step < 6) return;
+          for (const n of around(i)) {
+            const o = s.tiles[n];
+            if (o.water === SEA || o.h > s.tiles[i].h + 0.15) continue;
+            if (rand(s) < 0.22 + Math.min(0.3, step * 0.012)) wide.push(n);
+          }
+        });
+        flows.push(wide);
       }
       // Interleave the streams so they all advance together.
       const seen = new Set<number>();
-      for (let step = 0; step < 30; step++)
+      const longest = Math.max(...flows.map((f) => f.length));
+      for (let step = 0; step < longest; step++)
         for (const f of flows) {
           const i = f[step];
           if (i === undefined || seen.has(i)) continue;
@@ -467,7 +481,12 @@ export function applyPower(s: WorldState, a: Action): ActionImpact {
         const a = along(i);
         const width = 7 + a * 0.45;
         const inland = Math.max(0, a - best);
-        return 3.4 * (1 - inland / REACH) - (lat(i) / width) * 1.2;
+        // Strongest head-on, dying away to the sides and inland in a rounded
+        // tongue, broken up by the lie of the land.
+        const k = Math.min(1, inland / REACH);
+        const side = Math.min(1, lat(i) / width);
+        const rough = (noise(s.seed + 91, tx(i) * 0.19, ty(i) * 0.19) - 0.5) * 1.8;
+        return Math.min(3.3, 3.4 * (1 - k ** 1.4) * (1 - side * side) + rough);
       };
       const inBand = (i: number) => {
         const a = along(i);

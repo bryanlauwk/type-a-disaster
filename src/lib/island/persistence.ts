@@ -3,7 +3,7 @@ import { replay } from "./sim";
 import { FOCI, POWERS, SIZE, SPECIES, TRAITS, type Chronicle, type WorldState } from "./types";
 
 // v2: the island doubled in size (128×128); older saves start afresh.
-const ISLAND_KEY = "primordia:island:v2";
+const ISLAND_KEY = "primordia:island:v3";
 
 function read(key: string): string | null {
   try {
@@ -48,7 +48,7 @@ const chronicleSchema = z.object({
 });
 
 const savedSchema = z.object({
-  v: z.literal(2),
+  v: z.literal(3),
   seed: z.number().int(),
   day: z.number().int().min(0).max(100000),
   actions: z.array(actionSchema).max(1000),
@@ -58,7 +58,7 @@ type Saved = z.input<typeof savedSchema>;
 
 function toSaved(s: WorldState): Saved {
   return {
-    v: 2,
+    v: 3,
     seed: s.seed,
     day: s.day,
     // Effects are recomputed on replay; only what the god chose is kept.
@@ -90,7 +90,7 @@ export function loadIsland(): WorldState | null {
     const snap = data.snapshot;
     if (
       snap &&
-      snap.version === 2 &&
+      snap.version === 3 &&
       snap.seed === saved.seed &&
       snap.day === saved.day &&
       Array.isArray(snap.tiles)
