@@ -1202,7 +1202,8 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       } else {
         // Turning rate: brisk for small animals, ponderous for giants.
         const rate = turnRateFor(gaitFamily(a.sp, model.gait), len, running);
-        a.yaw += Math.max(-rate * dt, Math.min(rate * dt, err * Math.min(1, dt * 6)));
+        const support = plantedTurnScale(a.phase, gaitFamily(a.sp, model.gait));
+        a.yaw += Math.max(-rate * support * dt, Math.min(rate * support * dt, err * Math.min(1, dt * 6)));
       }
       let yawDelta = a.yaw - a.prevYaw;
       yawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
@@ -1212,6 +1213,8 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       a.fatigue = updateFatigue(a.fatigue, running ? a.speed / Math.max(walk * RUN, 0.01) : 0, dt);
       a.prevYaw = a.yaw;
       a.prevSpeed = a.speed;
+      const stepX = a.x;
+      const stepZ = a.z;
       if (a.speed > 0.005) {
         const nx = a.x + Math.sin(a.yaw) * a.speed * dt;
         const nz = a.z + Math.cos(a.yaw) * a.speed * dt;
@@ -1261,7 +1264,16 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         a.yaw += turn * Math.min(1, dt * (1.2 / (0.6 + lengthOf(a) * 0.3)));
         if (Math.abs(turn) < 0.03) a.face = undefined;
       }
-      a.phase += dt * (2 + (a.speed * (model.gait === "fly" ? 3 : 6)) / Math.max(0.4, a.scale));
+      if (model.gait === "fly" || model.gait === "swim") {
+        a.phase = (a.phase + dt * (model.gait === "fly" ? 4.6 : 2.1)) % (Math.PI * 2);
+      } else {
+        const moved = Math.hypot(a.x - stepX, a.z - stepZ);
+        a.phase = advanceGaitPhase(
+          a.phase,
+          moved,
+          strideLengthFor(gaitFamily(a.sp, model.gait), len, running),
+        );
+      }
       const ground = heightAt(w.tiles, a.x, a.z);
       if (model.gait === "fly") {
         a.y = Math.max(ground, 0) + 3 + Math.sin(t * 0.8 + a.id) * 0.8 + (a.id % 3);
@@ -1282,7 +1294,10 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         const k = Math.min(1, dt * 5);
         a.pitch += (Math.max(-0.5, Math.min(0.5, pitch)) - a.pitch) * k;
         a.roll += (Math.max(-0.2, Math.min(0.2, roll)) - a.roll) * k;
-        a.y = Math.max(Math.max(0, ground), (hf + hb) / 2) - (a.state === "nest" ? 0.05 : 0);
+        const footBed = (hf + hb + hl + hr) / 4;
+        const roughness = Math.max(hf, hb, hl, hr) - Math.min(hf, hb, hl, hr);
+        a.y = Math.max(Math.max(0, ground), footBed + roughness * 0.12) -
+          (a.state === "nest" ? 0.05 : 0);
       }
     }
     // Animals keep a body's width apart instead of walking through each other.
@@ -1362,19 +1377,28 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         skinCount[key] = n + 1;
         animate(a, skin, model.gait, t, dt);
         const len = lengthOf(a);
+        const pose = gaitPose(gaitFamily(a.sp, model.gait), {
+          speed: a.speed,
+          maxWalk: a.maxWalk ?? WALK[a.sp],
+          maxRun: a.maxRun ?? WALK[a.sp] * RUN,
+          yawRate: a.yawRate,
+          acceleration: a.acceleration,
+          fatigue: a.fatigue,
+          phase: a.phase,
+        });
         // The dead keel over onto their side (not in one frame), then sink away.
         const fallTime = Math.max(0.55, Math.min(1.8, 0.55 + len * 0.22));
         const fall = dead ? Math.min(1, Math.max(0, a.deadFor) / fallTime) ** 2 : 0;
         const side = hash(a.id, 31) < 0.5 ? -1 : 1;
         e.set(
-          a.pitch * (1 - fall),
+          (a.pitch + pose.bodyLean) * (1 - fall),
           a.yaw,
-          a.roll * (1 - fall) + side * fall * Math.PI * 0.5,
+          (a.roll + pose.pelvisRoll) * (1 - fall) + side * fall * Math.PI * 0.5,
           "YXZ",
         );
         q.setFromEuler(e);
         const sink = dead ? Math.max(0, a.deadFor - 10) * 0.05 * len : 0;
-        p.set(a.x, a.y + fall * skin.meta.width * 0.5 * len - sink, a.z);
+        p.set(a.x, a.y + pose.pelvisLift * len + fall * skin.meta.width * 0.5 * len - sink, a.z);
         s.set(len * a.build[0], len * a.build[1], len);
         out.compose(p, q, s);
         mesh.setMatrixAt(n, out);
@@ -1392,13 +1416,19 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         at.f.setX(n, a.fade);
         continue;
       }
-      e.set(0, a.yaw, dead ? Math.PI / 2 : 0);
+      const pose = gaitPose(gaitFamily(a.sp, model.gait), {
+        speed: a.speed,
+        maxWalk: a.maxWalk ?? WALK[a.sp],
+        maxRun: a.maxRun ?? WALK[a.sp] * RUN,
+        yawRate: a.yawRate,
+        acceleration: a.acceleration,
+        fatigue: a.fatigue,
+        phase: a.phase,
+      });
+      e.set(a.pitch + pose.bodyLean, a.yaw, dead ? Math.PI / 2 : a.roll + pose.pelvisRoll, "YXZ");
       q.setFromEuler(e);
       const sink = dead ? Math.max(0, a.deadFor - 10) * 0.05 : 0;
-      p.set(a.x, a.y + (dead ? 0.1 * a.scale : 0) - sink, a.z);
-      // Bob with each step.
-      if (!dead && a.speed > 0.05 && model.gait !== "fly" && model.gait !== "swim")
-        p.y += Math.abs(Math.sin(a.phase)) * 0.02 * a.scale;
+      p.set(a.x, a.y + pose.pelvisLift * lengthOf(a) + (dead ? 0.1 * a.scale : 0) - sink, a.z);
       s.setScalar(a.scale);
       base.compose(p, q, s);
       for (const g of GEOS) {
