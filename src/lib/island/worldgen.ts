@@ -594,7 +594,7 @@ export function generateIsland(seed: number): WorldState {
   };
 
   const state: WorldState = {
-    version: 3,
+    version: 4,
     name: ISLAND_NAME,
     seed,
     rng: seed ^ 0x5bd1e995,
@@ -614,6 +614,11 @@ export function generateIsland(seed: number): WorldState {
     actions: [],
     chronicle: [],
     notices: [],
+    outbreaks: [],
+    history: {
+      herds: Object.fromEntries(SPECIES.map((s) => [s, []])) as unknown as WorldState["history"]["herds"],
+      tribe: [],
+    },
     routesDirty: true,
   };
   return state;

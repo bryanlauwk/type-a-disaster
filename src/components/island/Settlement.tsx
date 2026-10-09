@@ -16,7 +16,7 @@ import {
   type WorldState,
 } from "@/lib/island/types";
 import { heightAt } from "./palette";
-import { lifeBus } from "./Dinos";
+import { lifeBus } from "./lifeBus";
 import { env } from "./fx/env";
 import { Puffs } from "./fx/vfx";
 import { clipRows, loadSkin, type ClipName, type Skin } from "./dinoSkins";

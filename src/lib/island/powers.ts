@@ -217,6 +217,12 @@ function cull(
     addPop(s, sp, region, -d);
     deaths[sp] = (deaths[sp] ?? 0) + d;
   }
+  // The fallen are left where they fell, and the scavengers come.
+  const total = Object.values(deaths).reduce((a, b) => a + (b ?? 0), 0);
+  if (total > 0.5) {
+    const at = geography(s).centre[region];
+    s.tiles[at].carcass = Math.min(4, (s.tiles[at].carcass ?? 0) + total * 0.4);
+  }
   return deaths;
 }
 
@@ -594,14 +600,13 @@ export function applyPower(s: WorldState, a: Action): ActionImpact {
       break;
     }
     case "plague": {
-      // The biggest herd nearby sickens; the sickness spreads to neighbours.
+      // The biggest herd nearby sickens; the sickness spreads on its own.
       const geo = geography(s);
       let sp: SpeciesId = "duckbill";
       let most = 0;
       for (const h of HERBIVORES)
         if (popIn(s, h, region) > most) [sp, most] = [h, popIn(s, h, region)];
-      impact.deaths = cull(s, region, 0.5, [sp]);
-      for (const nb of geo.neighbours[region]) merge(impact.deaths, cull(s, nb, 0.2, [sp]));
+      s.outbreaks.push({ region, days: 6 + randInt(s, 4), species: sp });
       impact.tiles = geo.tiles[region].filter((i) => !s.tiles[i].water).slice(0, 40);
       break;
     }

@@ -117,6 +117,10 @@ export interface Tile {
   lava: number;
   /** 0–1: how worn the ground is by herds passing (visible trails). */
   trail: number;
+  /** Food left on a carcass here (kills, disasters); decays each day. */
+  carcass?: number;
+  /** 0–1: how much water a river tile is carrying (droughts shrink it). */
+  flow?: number;
   /** A human structure standing here. */
   build?: StructureKind;
   /** Day it was built (for pop-in). */
@@ -239,10 +243,23 @@ export interface Notice {
   day: number;
   text: string;
   kind: "herd" | "tribe" | "nature" | "danger" | "discovery";
+  /** Where on the island it happened, when the news names a place. */
+  region?: RegionId;
+}
+
+/** How many past days of population counts the island keeps. */
+export const HISTORY_MAX = 180;
+
+/** A sickness moving through one species in one region. */
+export interface Outbreak {
+  region: RegionId;
+  species: SpeciesId;
+  /** Days left before it burns out. */
+  days: number;
 }
 
 export interface WorldState {
-  version: 3;
+  version: 4;
   name: string;
   seed: number;
   rng: number;
@@ -267,6 +284,10 @@ export interface WorldState {
   actions: ActionRecord[];
   chronicle: Chronicle[];
   notices: Notice[];
+  /** Sicknesses currently moving through the island's animals. */
+  outbreaks: Outbreak[];
+  /** Population counts, the last HISTORY_MAX days, for the almanac graphs. */
+  history: { herds: Record<SpeciesId, number[]>; tribe: number[] };
   /** Migration corridor per herd route key, for trails (recomputed). */
   routesDirty: boolean;
 }

@@ -27,6 +27,7 @@ import { GodPanel, POWER_RADIUS, WHOLE_ISLAND, type Armed } from "@/components/i
 import { CaveWall } from "@/components/island/CaveWall";
 import { planReveal, type ActRun, type TileReveal } from "@/components/island/Acts";
 import type { Cursor, SimClock } from "@/components/island/IslandScene";
+import { lifeBus, type BusAgent } from "@/components/island/lifeBus";
 import { act, affordable, createWorld, REGION_NAMES, seasonOf, tick } from "@/lib/island/sim";
 import { totalOf } from "@/lib/island/ecology";
 import { POWER_DEFS, type PowerGroup } from "@/lib/island/powers";
@@ -42,7 +43,16 @@ import {
 } from "@/lib/island/persistence";
 import { describeAct, milestoneEntry, plainEntry } from "@/lib/island/story";
 import { tellStory } from "@/lib/island/chronicle.functions";
-import { SPECIES, type Chronicle, type WorldState } from "@/lib/island/types";
+import {
+  RIVER,
+  SPECIES,
+  wx,
+  wz,
+  type Chronicle,
+  type RegionId,
+  type SpeciesId,
+  type WorldState,
+} from "@/lib/island/types";
 import { cn } from "@/lib/utils";
 
 const IslandScene = lazy(() => import("@/components/island/IslandScene"));
@@ -56,6 +66,20 @@ const FAST_MS = 2_500;
 /** Acts worth a story on the cave wall. */
 const STORIED = (p: Armed["power"]) =>
   POWER_DEFS[p].dramatic || p === "introduce" || p === "evolve";
+
+/** What an animal's live state reads as on its card. */
+const STATE_TEXT: Record<string, string> = {
+  idle: "Standing about",
+  graze: "Grazing",
+  walk: "On the move",
+  run: "Running",
+  drink: "Drinking at the water",
+  flee: "Fleeing",
+  hunt: "Hunting",
+  eat: "Feeding",
+  nest: "Nesting",
+  dead: "Fallen",
+};
 
 const newSeed = () => {
   // ?seed=N in the URL starts a fresh island from that seed (for testing).
@@ -86,6 +110,10 @@ function Index() {
   const [armed, setArmed] = useState<Armed | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [inspect, setInspect] = useState<number | null>(null);
+  /** The animal (by live id) being inspected. */
+  const [animal, setAnimal] = useState<number | null>(null);
+  const [follow, setFollow] = useState<SpeciesId | null>(null);
+  const [focus, setFocus] = useState<{ tile: number; stamp: number } | null>(null);
   const [run, setRun] = useState<ActRun | null>(null);
   const [reveal, setReveal] = useState<TileReveal[]>([]);
   const [display, setDisplay] = useState<WorldState | null>(null);
@@ -254,9 +282,41 @@ function Index() {
         cast(armed, tile);
         return;
       }
+      // An animal first, if one stands where the god pointed.
+      const x = wx(tile);
+      const z = wz(tile);
+      let best: BusAgent | null = null;
+      let bd = 3;
+      for (const a of lifeBus.agents) {
+        if (a.state === "dead") continue;
+        const d = Math.hypot(a.x - x, a.z - z);
+        if (d < bd) {
+          bd = d;
+          best = a;
+        }
+      }
+      if (best) {
+        setAnimal((cur) => (cur === best.id ? null : best.id));
+        setInspect(null);
+        return;
+      }
       setInspect((cur) => (cur === tile ? null : tile));
+      setAnimal(null);
     },
     [world, targetReady, armed, cast],
+  );
+
+  /** Fly the camera over a region (from a notice or the almanac). */
+  const locateRegion = useCallback(
+    (region: RegionId) => {
+      if (!world) return;
+      const tile = world.tiles.findIndex((t) => t.region === region);
+      if (tile < 0) return;
+      setAnimal(null);
+      setInspect(null);
+      setFocus({ tile, stamp: performance.now() });
+    },
+    [world],
   );
 
   // ?cast=<power> (or <power>:<tile>) fires a power once the island is up: for
@@ -319,6 +379,9 @@ function Index() {
     setDisplay(null);
     setArmed(null);
     setInspect(null);
+    setAnimal(null);
+    setFollow(null);
+    setFocus(null);
     setWorld(createWorld(newSeed()));
     setTickAt(performance.now() - 0.3 * DAY_MS);
   };
@@ -347,6 +410,8 @@ function Index() {
                   onReveal={onReveal}
                   onActDone={onActDone}
                   mapView={mapView && !run}
+                  follow={follow}
+                  focus={focus}
                 />
               ) : (
                 <SceneFallback />
@@ -425,8 +490,29 @@ function Index() {
           </div>
         )}
 
-        {world && inspect !== null && !armed && (
+        {world && animal !== null && !armed && (
+          <AnimalCard
+            id={animal}
+            onClose={() => setAnimal(null)}
+            onFollow={(sp) => setFollow((f) => (f === sp ? null : sp))}
+            following={follow === lifeBus.agents.find((a) => a.id === animal)?.sp}
+          />
+        )}
+        {world && animal === null && inspect !== null && !armed && (
           <TileCard world={world} tile={inspect} onClose={() => setInspect(null)} />
+        )}
+        {follow && !animal && (
+          <div className="absolute bottom-[10.5rem] left-2 z-10 flex items-center gap-2 border-2 border-ink bg-paper/95 px-2 py-1 text-xs shadow-[3px_3px_0_0_var(--ink)] sm:bottom-auto sm:left-3 sm:top-[3.75rem]">
+            <span className="inline-block size-1.5 animate-pulse rounded-full bg-stamp" />
+            Following the {SPECIES_DEFS[follow].plural.toLowerCase()}
+            <button
+              onClick={() => setFollow(null)}
+              className="font-mono text-[10px] text-ink/50 hover:text-ink"
+              aria-label="Stop following"
+            >
+              stop
+            </button>
+          </div>
         )}
 
         {/* God powers */}
@@ -475,7 +561,7 @@ function Index() {
           />
         </button>
         <div className={cn(!wallOpen && "hidden", "lg:block lg:h-full")}>
-          {world && <CaveWall world={world} telling={telling > 0} />}
+          {world && <CaveWall world={world} telling={telling > 0} onLocate={locateRegion} />}
         </div>
       </aside>
 
@@ -544,7 +630,9 @@ function TileCard({
         {t.fire > 0 ? "Burning. " : ""}
         {t.lava > 0 ? "Molten lava. " : ""}
         {t.flood > 0 ? "Under floodwater. " : ""}
+        {t.carcass ? "A carcass lies here, feeding the scavengers. " : ""}
         {t.build ? `The tribe's ${t.build.replace(/_/g, " ")}. ` : ""}
+        {t.water === RIVER && `River flowing at ${Math.round((t.flow ?? 1) * 100)}%. `}
         Plants {Math.round(t.veg * 100)}% · trees {Math.round(t.forest * 100)}%
       </p>
       {animals.length > 0 && (
@@ -557,6 +645,60 @@ function TileCard({
       )}
       {world.sanctuaries.includes(t.region) && (
         <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-moss">Sanctuary</p>
+      )}
+    </div>
+  );
+}
+
+/** What one tapped animal is up to, live. */
+function AnimalCard({
+  id,
+  onClose,
+  onFollow,
+  following,
+}: {
+  id: number;
+  onClose: () => void;
+  onFollow: (sp: SpeciesId) => void;
+  following: boolean;
+}) {
+  const a = lifeBus.agents.find((o) => o.id === id);
+  if (!a) return null;
+  const d = SPECIES_DEFS[a.sp];
+  return (
+    <div className="absolute bottom-[10.5rem] left-2 z-10 w-60 border-2 border-ink bg-paper/95 p-2.5 text-xs shadow-[3px_3px_0_0_var(--ink)] backdrop-blur-sm sm:bottom-auto sm:left-3 sm:top-24">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-muted-foreground">
+            {a.young ? "young" : "adult"} · {REGION_NAMES[a.region]}
+          </p>
+          <p className="font-serif-d text-sm font-bold leading-tight">
+            {a.state === "dead" ? `a fallen ${d.name}` : d.name}
+          </p>
+        </div>
+        <button
+          onClick={onClose}
+          className="font-mono text-[10px] text-ink/50 hover:text-ink"
+          aria-label="Close"
+        >
+          ✕
+        </button>
+      </div>
+      <p className="mt-1.5 text-ink/75">
+        Right now: {STATE_TEXT[a.state] ?? a.state}.
+        {a.young && " Still growing, keeping close to the herd."}
+      </p>
+      <p className="mt-1 text-ink/60">{d.blurb}</p>
+      {a.state !== "dead" && (
+        <button
+          onClick={() => onFollow(a.sp)}
+          className={cn(
+            "mt-2 border-2 border-ink px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider",
+            following ? "bg-ink text-paper" : "bg-paper hover:bg-ink/10",
+          )}
+        >
+          {following ? "Following" : "Follow the herd"}
+        </button>
       )}
     </div>
   );

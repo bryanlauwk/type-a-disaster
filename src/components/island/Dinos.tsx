@@ -24,6 +24,7 @@ import { eruptBus } from "./Eruption";
 import { dustBus } from "./fx/dust";
 import { newGroup, panic, slotOf, stepGroup, type HerdGroup } from "./herds";
 import { env } from "./fx/env";
+import { lifeBus } from "./lifeBus";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -106,13 +107,6 @@ export interface Agent {
   face?: number;
 }
 
-/** Shared with the rest of the scene: where the dangerous animals are right now. */
-export const lifeBus = {
-  hunters: [] as { x: number; z: number; danger: number }[],
-  agents: [] as Agent[],
-  /** Scripted runs for acts: a stampeding herd, a raiding pack. */
-  runs: [] as { sp: SpeciesId; points: { x: number; z: number }[]; speed: number; count: number }[],
-};
 
 /** How many animals each simulated one looks like on screen. */
 const SHOW: Record<SpeciesId, number> = {
