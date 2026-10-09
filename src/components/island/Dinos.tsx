@@ -1262,9 +1262,7 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       const a = list[i];
       if (
         a.state === "dead" ||
-        a.path ||
-        MODELS[a.sp].gait === "fly" ||
-        MODELS[a.sp].gait === "swim"
+        a.path
       )
         continue;
       const la = lengthOf(a);
@@ -1272,7 +1270,10 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         const b = list[j];
         if (b.state === "dead" || b.path)
           continue;
-        const aerialPair = MODELS[a.sp].gait === MODELS[b.sp].gait && (MODELS[a.sp].gait === "fly" || MODELS[a.sp].gait === "swim");
+        const aAerial = MODELS[a.sp].gait === "fly" || MODELS[a.sp].gait === "swim";
+        const bAerial = MODELS[b.sp].gait === "fly" || MODELS[b.sp].gait === "swim";
+        const aerialPair = MODELS[a.sp].gait === MODELS[b.sp].gait && aAerial;
+        if (aAerial !== bAerial) continue;
         if ((MODELS[a.sp].gait === "fly" || MODELS[a.sp].gait === "swim") && !aerialPair) continue;
         if (aerialPair && (a.sp !== b.sp || a.region !== b.region)) continue;
         if (a.prey === b || b.prey === a) continue;

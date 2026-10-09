@@ -707,6 +707,11 @@ function AnimalCard({
   onFollow: (id: number) => void;
   following: boolean;
 }) {
+  const [, refresh] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => refresh((n) => n + 1), 250);
+    return () => window.clearInterval(timer);
+  }, []);
   const a = lifeBus.agents.find((o) => o.id === id);
   if (!a) return null;
   const d = SPECIES_DEFS[a.sp];
