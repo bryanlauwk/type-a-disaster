@@ -25,6 +25,7 @@ import { dustBus } from "./fx/dust";
 import { newGroup, panic, slotOf, stepGroup, type HerdGroup } from "./herds";
 import { env } from "./fx/env";
 import { lifeBus } from "./lifeBus";
+import { gaitPose, turnRateFor, updateFatigue, type GaitFamily } from "./animalKinetics";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -105,6 +106,14 @@ export interface Agent {
   /** The herd it grazes with (plant-eaters), and which way it wants to face when standing. */
   group?: string;
   face?: number;
+  /** Kinetic state used for weight, secondary motion and the live inspector. */
+  acceleration: number;
+  yawRate: number;
+  fatigue: number;
+  prevSpeed: number;
+  prevYaw: number;
+  intent: string;
+  alertness: "calm" | "watchful" | "alarmed";
 }
 
 
@@ -135,6 +144,12 @@ const WALK: Record<SpeciesId, number> = {
   leviathan: 0.8,
 };
 const RUN = 2.6;
+
+function gaitFamily(sp: SpeciesId, gait: string): GaitFamily {
+  if (gait === "fly" || gait === "swim") return gait;
+  if (gait === "biped") return "biped";
+  return sp === "titan" || sp === "plateback" ? "heavy-quad" : "quad";
+}
 
 /** Body length on screen at the species' standard size (world units). */
 /**
@@ -309,22 +324,32 @@ function animate(a: Agent, skin: Skin, gait: string, t: number, dt: number) {
 function jointRotation(a: Anim, ag: Agent, t: number, gait: string): THREE.Matrix4 {
   const moving =
     ag.state === "walk" || ag.state === "run" || ag.state === "flee" || ag.state === "hunt";
-  const stride = moving ? (ag.state === "walk" ? 0.45 : 0.8) : 0;
+  const pose = gaitPose(gaitFamily(ag.sp, gait), {
+    speed: moving ? ag.speed : 0,
+    maxWalk: ag.maxWalk ?? WALK[ag.sp],
+    maxRun: ag.maxRun ?? WALK[ag.sp] * RUN,
+    yawRate: ag.yawRate,
+    acceleration: ag.acceleration,
+    fatigue: ag.fatigue,
+  });
+  const stride = pose.stride;
   const ph = ag.phase;
   switch (a) {
     case "legFL":
-    case "legBR":
       if (gait === "swim") return rot.makeRotationZ(Math.sin(t * 2 + ag.id) * 0.4);
-      return rot.makeRotationX(Math.sin(ph) * stride);
+      return rot.makeRotationX(Math.sin(ph + pose.phaseFrontLeft) * stride);
     case "legFR":
-    case "legBL":
       if (gait === "swim") return rot.makeRotationZ(-Math.sin(t * 2 + ag.id) * 0.4);
-      return rot.makeRotationX(-Math.sin(ph) * stride);
+      return rot.makeRotationX(Math.sin(ph + pose.phaseFrontRight) * stride);
+    case "legBL":
+      return rot.makeRotationX(Math.sin(ph + pose.phaseBackLeft) * stride);
+    case "legBR":
+      return rot.makeRotationX(Math.sin(ph + pose.phaseBackRight) * stride);
     case "neck":
       return rot.makeRotationFromEuler(
         e.set(
           ag.state === "graze" || ag.state === "drink" ? 0.35 : Math.sin(t * 0.7 + ag.id) * 0.08,
-          Math.sin(t * 0.5 + ag.id) * 0.25,
+          Math.sin(t * 0.5 + ag.id) * 0.18 + pose.headCounterTurn,
           0,
         ),
       );
@@ -332,10 +357,16 @@ function jointRotation(a: Anim, ag: Agent, t: number, gait: string): THREE.Matri
       if (ag.state === "graze" || ag.state === "drink" || ag.state === "eat")
         return rot.makeRotationX(0.6 + Math.sin(t * 3 + ag.id) * 0.12);
       return rot.makeRotationFromEuler(
-        e.set(Math.sin(t * 1.3 + ag.id) * 0.06, Math.sin(t * 0.8 + ag.id) * 0.2, 0),
+        e.set(
+          Math.sin(t * 1.3 + ag.id) * 0.05 + pose.bodyLean,
+          Math.sin(t * 0.8 + ag.id) * 0.14 + pose.headCounterTurn,
+          0,
+        ),
       );
     case "tail":
-      return rot.makeRotationY(Math.sin(t * (moving ? 3 : 1.2) + ag.id) * (moving ? 0.2 : 0.12));
+      return rot.makeRotationY(
+        Math.sin(t * (moving ? 3 : 1.2) + ag.id) * (moving ? 0.16 : 0.1) + pose.tailLag,
+      );
     case "jaw":
       return rot.makeRotationX(
         ag.state === "eat" || ag.state === "hunt" ? 0.25 + Math.sin(t * 6) * 0.2 : 0.03,
@@ -417,6 +448,13 @@ function spawn(world: WorldState, sp: SpeciesId, region: RegionId, herd = 0, at?
     look: lk.look,
     look2: lk.look2,
     build: lk.build,
+    acceleration: 0,
+    yawRate: 0,
+    fatigue: 0,
+    prevSpeed: 0,
+    prevYaw: hash(id, 4) * Math.PI * 2,
+    intent: "Resting",
+    alertness: "calm",
   };
 }
 
@@ -716,6 +754,23 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         if (a.deadFor > 16) list.splice(k, 1);
         continue;
       }
+      a.intent =
+        a.state === "hunt"
+          ? "Closing on prey"
+          : a.state === "flee"
+            ? "Escaping danger"
+            : a.state === "drink"
+              ? "Seeking water"
+              : a.state === "graze"
+                ? "Feeding with the herd"
+                : a.state === "eat"
+                  ? "Recovering after a hunt"
+                  : a.state === "walk"
+                    ? "Moving to fresh ground"
+                    : a.state === "nest"
+                      ? "Resting with the young"
+                      : "Watching the surroundings";
+      a.alertness = a.state === "flee" || a.state === "hunt" ? "alarmed" : a.face !== undefined ? "watchful" : "calm";
       if (SPECIES_DEFS[a.sp].diet === "meat")
         hunters.push({ x: a.x, z: a.z, danger: SPECIES_DEFS[a.sp].danger });
       if (a.path) {
@@ -1108,6 +1163,8 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         want = Math.min(want, dist * (running ? 3 : 1.4));
       } else want = 0;
       // Heavy bodies take a while to get going and to pull up.
+      const fatigueLimit = 1 - a.fatigue * 0.28;
+      want *= fatigueLimit;
       const accel = ((want > a.speed ? 1.6 : 2.6) * walk * (running ? 2 : 1)) / (0.6 + len * 0.12);
       a.speed += Math.max(-accel * dt, Math.min(accel * dt, want - a.speed));
       if (want === 0 && a.speed < walk * 0.08) a.speed = 0;
@@ -1116,9 +1173,17 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         a.yaw += err * Math.min(1, dt * 1.6);
       } else {
         // Turning rate: brisk for small animals, ponderous for giants.
-        const rate = (3.2 / (0.7 + len * 0.35)) * (running ? 1.3 : 1);
+        const rate = turnRateFor(gaitFamily(a.sp, model.gait), len, running);
         a.yaw += Math.max(-rate * dt, Math.min(rate * dt, err * Math.min(1, dt * 6)));
       }
+      let yawDelta = a.yaw - a.prevYaw;
+      yawDelta = Math.atan2(Math.sin(yawDelta), Math.cos(yawDelta));
+      const smoothing = 1 - Math.exp(-8 * dt);
+      a.yawRate += (yawDelta / Math.max(dt, 0.001) - a.yawRate) * smoothing;
+      a.acceleration += ((a.speed - a.prevSpeed) / Math.max(dt, 0.001) - a.acceleration) * smoothing;
+      a.fatigue = updateFatigue(a.fatigue, running ? a.speed / Math.max(walk * RUN, 0.01) : 0, dt);
+      a.prevYaw = a.yaw;
+      a.prevSpeed = a.speed;
       if (a.speed > 0.005) {
         const nx = a.x + Math.sin(a.yaw) * a.speed * dt;
         const nz = a.z + Math.cos(a.yaw) * a.speed * dt;
@@ -1140,11 +1205,13 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
           a.z = nz;
           // A running animal kicks up dust off dry ground.
           if (model.gait !== "fly" && model.gait !== "swim" && a.speed > walk * 1.3) {
+            const footPhase = Math.sin(a.phase);
+            const footDown = footPhase < -0.72;
             a.dust = (a.dust ?? 0) - dt;
             const dry =
               !tile.water && !tile.flood && tile.biome !== "wetland" && tile.biome !== "mangrove";
-            if (a.dust <= 0 && dry) {
-              a.dust = 0.1 + hash(a.id, Math.floor(t * 10)) * 0.12;
+            if (a.dust <= 0 && dry && footDown) {
+              a.dust = 0.16 + hash(a.id, Math.floor(t * 10)) * 0.1;
               const back = len * 0.25;
               dustBus.emit(
                 a.x - Math.sin(a.yaw) * back + (hash(a.id, Math.floor(t * 20)) - 0.5) * len * 0.3,
@@ -1203,13 +1270,11 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
       const la = lengthOf(a);
       for (let j = i + 1; j < list.length; j++) {
         const b = list[j];
-        if (
-          b.state === "dead" ||
-          b.path ||
-          MODELS[b.sp].gait === "fly" ||
-          MODELS[b.sp].gait === "swim"
-        )
+        if (b.state === "dead" || b.path)
           continue;
+        const aerialPair = MODELS[a.sp].gait === MODELS[b.sp].gait && (MODELS[a.sp].gait === "fly" || MODELS[a.sp].gait === "swim");
+        if ((MODELS[a.sp].gait === "fly" || MODELS[a.sp].gait === "swim") && !aerialPair) continue;
+        if (aerialPair && (a.sp !== b.sp || a.region !== b.region)) continue;
         if (a.prey === b || b.prey === a) continue;
         const ddx = b.x - a.x;
         const ddz = b.z - a.z;
@@ -1225,6 +1290,14 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         a.z -= ddz * push * wa;
         b.x += ddx * push * (1 - wa);
         b.z += ddz * push * (1 - wa);
+        if (aerialPair && d < min * 2.4) {
+          // Flocks and pods anticipate one another instead of orbiting through
+          // their neighbours; headings softly align after separating.
+          let align = b.yaw - a.yaw;
+          align = Math.atan2(Math.sin(align), Math.cos(align));
+          a.yaw += align * Math.min(0.08, dt);
+          b.yaw -= align * Math.min(0.08, dt);
+        }
       }
     }
     lifeBus.hunters = hunters;
@@ -1250,7 +1323,8 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         animate(a, skin, model.gait, t, dt);
         const len = lengthOf(a);
         // The dead keel over onto their side (not in one frame), then sink away.
-        const fall = dead ? Math.min(1, Math.max(0, a.deadFor) / 0.9) ** 2 : 0;
+        const fallTime = Math.max(0.55, Math.min(1.8, 0.55 + len * 0.22));
+        const fall = dead ? Math.min(1, Math.max(0, a.deadFor) / fallTime) ** 2 : 0;
         const side = hash(a.id, 31) < 0.5 ? -1 : 1;
         e.set(
           a.pitch * (1 - fall),

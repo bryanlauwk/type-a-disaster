@@ -115,7 +115,7 @@ function Index() {
   const [inspect, setInspect] = useState<number | null>(null);
   /** The animal (by live id) being inspected. */
   const [animal, setAnimal] = useState<number | null>(null);
-  const [follow, setFollow] = useState<SpeciesId | null>(null);
+  const [follow, setFollow] = useState<number | null>(null);
   const [focus, setFocus] = useState<{ tile: number; stamp: number } | null>(null);
   const [run, setRun] = useState<ActRun | null>(null);
   const [reveal, setReveal] = useState<TileReveal[]>([]);
@@ -128,6 +128,19 @@ function Index() {
   const runId = useRef(0);
   const dramatic = !!run && !!display;
   const dayMs = fast ? FAST_MS : DAY_MS;
+  lifeBus.followedId = follow;
+
+  useEffect(() => {
+    if (follow === null) return;
+    const id = window.setInterval(() => {
+      const tracked = lifeBus.agents.find((a) => a.id === follow);
+      if (!tracked || tracked.state === "dead") {
+        setFollow(null);
+        toast("The animal you were following is no longer moving.");
+      }
+    }, 500);
+    return () => window.clearInterval(id);
+  }, [follow]);
 
   // A shared island from the link, else your saved one, else a new one.
   useEffect(() => {
@@ -508,17 +521,17 @@ function Index() {
           <AnimalCard
             id={animal}
             onClose={() => setAnimal(null)}
-            onFollow={(sp) => setFollow((f) => (f === sp ? null : sp))}
-            following={follow === lifeBus.agents.find((a) => a.id === animal)?.sp}
+            onFollow={(id) => setFollow((f) => (f === id ? null : id))}
+            following={follow === animal}
           />
         )}
         {world && animal === null && inspect !== null && !armed && (
           <TileCard world={world} tile={inspect} onClose={() => setInspect(null)} />
         )}
-        {follow && !animal && (
+        {follow !== null && !animal && (
           <div className="absolute bottom-[10.5rem] left-2 z-10 flex items-center gap-2 border-2 border-ink bg-paper/95 px-2 py-1 text-xs shadow-[3px_3px_0_0_var(--ink)] sm:bottom-auto sm:left-3 sm:top-[3.75rem]">
             <span className="inline-block size-1.5 animate-pulse rounded-full bg-stamp" />
-            Following the {SPECIES_DEFS[follow].plural.toLowerCase()}
+            Following one animal
             <button
               onClick={() => setFollow(null)}
               className="font-mono text-[10px] text-ink/50 hover:text-ink"
@@ -691,7 +704,7 @@ function AnimalCard({
 }: {
   id: number;
   onClose: () => void;
-  onFollow: (sp: SpeciesId) => void;
+  onFollow: (id: number) => void;
   following: boolean;
 }) {
   const a = lifeBus.agents.find((o) => o.id === id);
@@ -720,16 +733,22 @@ function AnimalCard({
         Right now: {STATE_TEXT[a.state] ?? a.state}.
         {a.young && " Still growing, keeping close to the herd."}
       </p>
+      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 border-y border-ink/15 py-1.5 font-mono text-[9px] uppercase">
+        <span className="text-ink/45">Intent</span><span>{a.intent}</span>
+        <span className="text-ink/45">Pace</span><span>{a.speed > 1.8 ? "running" : a.speed > 0.08 ? "walking" : "still"}</span>
+        <span className="text-ink/45">Alertness</span><span>{a.alertness}</span>
+        <span className="text-ink/45">Condition</span><span>{a.fatigue > 0.65 ? "tired" : a.fatigue > 0.3 ? "winded" : "fresh"}</span>
+      </div>
       <p className="mt-1 text-ink/60">{d.blurb}</p>
       {a.state !== "dead" && (
         <button
-          onClick={() => onFollow(a.sp)}
+          onClick={() => onFollow(a.id)}
           className={cn(
             "mt-2 border-2 border-ink px-2 py-0.5 font-mono text-[10px] uppercase tracking-wider",
             following ? "bg-ink text-paper" : "bg-paper hover:bg-ink/10",
           )}
         >
-          {following ? "Following" : "Follow the herd"}
+          {following ? "Following" : "Follow this animal"}
         </button>
       )}
     </div>
