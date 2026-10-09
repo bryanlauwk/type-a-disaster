@@ -25,7 +25,17 @@ import { dustBus } from "./fx/dust";
 import { newGroup, panic, slotOf, stepGroup, type HerdGroup } from "./herds";
 import { env } from "./fx/env";
 import { lifeBus } from "./lifeBus";
-import { gaitPose, turnRateFor, updateFatigue, type GaitFamily } from "./animalKinetics";
+import {
+  advanceGaitPhase,
+  footCycle,
+  gaitPose,
+  phaseMatchedTime,
+  plantedTurnScale,
+  strideLengthFor,
+  turnRateFor,
+  updateFatigue,
+  type GaitFamily,
+} from "./animalKinetics";
 
 /**
  * The island's animals on screen. The simulation says how many of each
@@ -287,11 +297,19 @@ function animate(a: Agent, skin: Skin, gait: string, t: number, dt: number) {
   }
   const want = resolve(skin, wantClip(a, gait, t));
   if (want !== a.clip) {
+    const outgoing = skin.meta.clips[a.clip];
+    const incoming = skin.meta.clips[want];
     a.prevClip = a.clip;
     a.prevT = a.clipT;
     a.fade = 1;
     a.clip = want;
-    a.clipT = want === "roar" || want === "attack" || want === "tail" ? 0 : hash(a.id, 13) * 2;
+    const locomotion = (c: ClipName) => c === "walk" || c === "run" || c === "creep";
+    a.clipT =
+      locomotion(a.prevClip) && locomotion(want) && outgoing && incoming
+        ? phaseMatchedTime(a.prevT, outgoing.dur, incoming.dur)
+        : want === "roar" || want === "attack" || want === "tail"
+          ? 0
+          : hash(a.id, 13) * (incoming?.dur ?? 2);
   }
   const meta = skin.meta.clips[a.clip]!;
   const len = lengthOf(a);
@@ -311,7 +329,7 @@ function animate(a: Agent, skin: Skin, gait: string, t: number, dt: number) {
     // Cycles per second that match the ground speed, so the feet don't skate.
     const natural = 1 / meta.dur;
     const cycles = a.speed / (travel * len);
-    rate = Math.min(a.clip === "run" ? 2 : 1.5, Math.max(0.5, cycles / natural));
+    rate = Math.min(a.clip === "run" ? 2 : 1.5, Math.max(0.15, cycles / natural));
   }
   a.clipT += dt * rate;
   if (a.fade > 0) {
@@ -331,25 +349,35 @@ function jointRotation(a: Anim, ag: Agent, t: number, gait: string): THREE.Matri
     yawRate: ag.yawRate,
     acceleration: ag.acceleration,
     fatigue: ag.fatigue,
+    phase: ag.phase,
   });
   const stride = pose.stride;
   const ph = ag.phase;
+  const family = gaitFamily(ag.sp, gait);
+  const duty = family === "heavy-quad" ? 0.82 : family === "quad" ? 0.7 : 0.58;
+  const leg = (offset: number, rear = false) => {
+    const step = footCycle(ph + offset, duty);
+    const rearScale = rear && family === "heavy-quad" ? 0.84 : 1;
+    return rot.makeRotationX(step.sweep * stride * rearScale - step.lift * stride * 0.18);
+  };
   switch (a) {
     case "legFL":
       if (gait === "swim") return rot.makeRotationZ(Math.sin(t * 2 + ag.id) * 0.4);
-      return rot.makeRotationX(Math.sin(ph + pose.phaseFrontLeft) * stride);
+      return leg(pose.phaseFrontLeft);
     case "legFR":
       if (gait === "swim") return rot.makeRotationZ(-Math.sin(t * 2 + ag.id) * 0.4);
-      return rot.makeRotationX(Math.sin(ph + pose.phaseFrontRight) * stride);
+      return leg(pose.phaseFrontRight);
     case "legBL":
-      return rot.makeRotationX(Math.sin(ph + pose.phaseBackLeft) * stride);
+      return leg(pose.phaseBackLeft, true);
     case "legBR":
-      return rot.makeRotationX(Math.sin(ph + pose.phaseBackRight) * stride);
+      return leg(pose.phaseBackRight, true);
     case "neck":
       return rot.makeRotationFromEuler(
         e.set(
-          ag.state === "graze" || ag.state === "drink" ? 0.35 : Math.sin(t * 0.7 + ag.id) * 0.08,
-          Math.sin(t * 0.5 + ag.id) * 0.18 + pose.headCounterTurn,
+          ag.state === "graze" || ag.state === "drink"
+            ? 0.35
+            : Math.sin((moving ? ph * 0.5 : t * 0.7) + ag.id) * 0.08,
+          Math.sin((moving ? ph * 0.5 : t * 0.5) + ag.id) * 0.12 + pose.headCounterTurn,
           0,
         ),
       );
@@ -358,14 +386,14 @@ function jointRotation(a: Anim, ag: Agent, t: number, gait: string): THREE.Matri
         return rot.makeRotationX(0.6 + Math.sin(t * 3 + ag.id) * 0.12);
       return rot.makeRotationFromEuler(
         e.set(
-          Math.sin(t * 1.3 + ag.id) * 0.05 + pose.bodyLean,
-          Math.sin(t * 0.8 + ag.id) * 0.14 + pose.headCounterTurn,
+          Math.sin((moving ? ph : t * 1.3) + ag.id) * 0.04,
+          Math.sin((moving ? ph * 0.5 : t * 0.8) + ag.id) * 0.1 + pose.headCounterTurn,
           0,
         ),
       );
     case "tail":
       return rot.makeRotationY(
-        Math.sin(t * (moving ? 3 : 1.2) + ag.id) * (moving ? 0.16 : 0.1) + pose.tailLag,
+        Math.sin((moving ? ph : t * 1.2) + ag.id) * (moving ? 0.12 : 0.1) + pose.tailLag,
       );
     case "jaw":
       return rot.makeRotationX(

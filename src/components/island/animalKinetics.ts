@@ -7,6 +7,7 @@ export interface MotionSample {
   yawRate: number;
   acceleration: number;
   fatigue: number;
+  phase?: number;
 }
 
 export interface GaitPose {
@@ -38,7 +39,7 @@ export function gaitPose(family: GaitFamily, motion: MotionSample): GaitPose {
   const rearOffset = family === "heavy-quad" ? Math.PI * 0.55 : Math.PI;
   const diagonal = family === "quad" ? Math.PI * (0.75 + runMix * 0.25) : Math.PI;
   const support = family === "heavy-quad" ? 0.82 : family === "quad" ? 0.7 : 0.58;
-  const cycle = footCycle(0, support);
+  const cycle = footCycle(motion.phase ?? 0, support);
   const pelvisAmount = family === "heavy-quad" ? 0.012 : family === "quad" ? 0.02 : 0.028;
   return {
     stride,
@@ -50,7 +51,7 @@ export function gaitPose(family: GaitFamily, motion: MotionSample): GaitPose {
     tailLag: Math.max(-0.35, Math.min(0.35, -motion.yawRate * 0.22)),
     headCounterTurn: Math.max(-0.24, Math.min(0.24, -motion.yawRate * 0.15)),
     pelvisLift: cycle.lift * pelvisAmount * pace,
-    pelvisRoll: Math.sin(motion.speed * 0.15) * pelvisAmount * 0.35,
+    pelvisRoll: Math.sin(motion.phase ?? 0) * pelvisAmount * pace,
   };
 }
 
