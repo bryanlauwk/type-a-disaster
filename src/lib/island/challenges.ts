@@ -6,7 +6,7 @@
 import { totalOf } from "./ecology";
 import { HERBIVORES, PREDATORS } from "./species";
 import { createWorld } from "./sim";
-import { REGIONS, SPECIES, type RegionId, type SpeciesId, type WorldState } from "./types";
+import { type RegionId, type SpeciesId, type WorldState } from "./types";
 
 export interface ChallengeDef {
   id: string;
@@ -106,8 +106,7 @@ export const CHALLENGES: ChallengeDef[] = [
       ];
       for (const [region, species] of picks) s.outbreaks.push({ region, species, days: 40 });
     },
-    fails: (s) =>
-      lost(extinct(s, SPECIES.filter((sp) => totalOf(s, sp) > 0 || sp !== "leviathan"))),
+    fails: (s) => lost(extinct(s, [...HERBIVORES, ...PREDATORS])),
   },
   {
     id: "lean_start",
@@ -136,7 +135,6 @@ export function createChallengeWorld(id: string, seed: number): WorldState {
   if (!def) return s;
   def.apply(s);
   s.challenge = { id, startDay: s.day };
-  // Species that start absent (or are absent on this seed) don't count as losses.
   return s;
 }
 
@@ -168,4 +166,3 @@ export const challengeProgress = (s: WorldState) => {
   return { def, run: c, elapsed, frac: Math.min(1, elapsed / def.days) };
 };
 
-export { REGIONS };
