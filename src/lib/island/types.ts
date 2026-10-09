@@ -258,6 +258,16 @@ export interface Outbreak {
   days: number;
 }
 
+export interface ChallengeRun {
+  id: string;
+  startDay: number;
+  /** Set once the challenge is decided. */
+  result?: "won" | "lost";
+  endDay?: number;
+  /** Why it was lost, when it was. */
+  reason?: string;
+}
+
 export interface WorldState {
   version: 4;
   name: string;
@@ -288,6 +298,8 @@ export interface WorldState {
   outbreaks: Outbreak[];
   /** Population counts, the last HISTORY_MAX days, for the almanac graphs. */
   history: { herds: Record<SpeciesId, number[]>; tribe: number[] };
+  /** The ecology challenge being played, if any. */
+  challenge?: ChallengeRun;
   /** Migration corridor per herd route key, for trails (recomputed). */
   routesDirty: boolean;
 }

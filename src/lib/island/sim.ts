@@ -31,6 +31,7 @@ import {
 } from "./types";
 
 export { seasonOf };
+import { judgeChallenge } from "./challenges";
 
 export const REGION_NAMES: Record<RegionId, string> = {
   volcano: "the Great Volcano",
@@ -252,6 +253,7 @@ export function tick(prev: WorldState): WorldState {
     s.history.tribe.splice(0, s.history.tribe.length - HISTORY_MAX);
 
   s.favour = Math.min(FAVOUR_MAX, s.favour + 1);
+  judgeChallenge(s);
   return s;
 }
 

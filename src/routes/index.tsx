@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Share2,
   Tag,
+  Trophy,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -25,6 +26,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { GodPanel, POWER_RADIUS, WHOLE_ISLAND, type Armed } from "@/components/island/GodPanel";
 import { CaveWall } from "@/components/island/CaveWall";
+import { ChallengeBadge, ChallengePicker, ChallengeVerdict } from "@/components/island/Challenges";
+import { createChallengeWorld } from "@/lib/island/challenges";
 import { planReveal, type ActRun, type TileReveal } from "@/components/island/Acts";
 import type { Cursor, SimClock } from "@/components/island/IslandScene";
 import { lifeBus, type BusAgent } from "@/components/island/lifeBus";
@@ -120,6 +123,8 @@ function Index() {
   const [telling, setTelling] = useState(0);
   const [wallOpen, setWallOpen] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [pickChallenge, setPickChallenge] = useState(false);
+  const [verdictSeen, setVerdictSeen] = useState<string | null>(null);
   const runId = useRef(0);
   const dramatic = !!run && !!display;
   const dayMs = fast ? FAST_MS : DAY_MS;
@@ -371,7 +376,7 @@ function Index() {
     }
   };
 
-  const newIsland = () => {
+  const newIsland = (challengeId?: string) => {
     clearIsland();
     setShared(false);
     history.replaceState(null, "", window.location.pathname);
@@ -382,7 +387,9 @@ function Index() {
     setAnimal(null);
     setFollow(null);
     setFocus(null);
-    setWorld(createWorld(newSeed()));
+    setWorld(challengeId ? createChallengeWorld(challengeId, newSeed()) : createWorld(newSeed()));
+    setVerdictSeen(null);
+    setPickChallenge(false);
     setTickAt(performance.now() - 0.3 * DAY_MS);
   };
 
@@ -475,15 +482,22 @@ function Index() {
           <IconButton onClick={share} label="Share island">
             <Share2 />
           </IconButton>
+          <IconButton onClick={() => setPickChallenge(true)} label="Challenges">
+            <Trophy />
+          </IconButton>
           <IconButton onClick={() => setConfirmReset(true)} label="New island">
             <RotateCcw />
           </IconButton>
         </div>
 
+        {world && !mapView && (
+          <ChallengeBadge world={world} onOpen={() => setPickChallenge(true)} />
+        )}
+
         {shared && (
           <div className="absolute left-2 right-14 top-[6.25rem] z-10 border-2 border-ink bg-paper/95 p-2 text-sm sm:left-3 sm:right-16 sm:top-20 sm:max-w-sm">
             You're visiting someone else's island. Use a power to make it yours, or{" "}
-            <button className="underline" onClick={newIsland}>
+            <button className="underline" onClick={() => newIsland()}>
               start your own
             </button>
             .
@@ -565,6 +579,24 @@ function Index() {
         </div>
       </aside>
 
+      <ChallengePicker
+        open={pickChallenge}
+        onOpenChange={setPickChallenge}
+        onStart={(id) => newIsland(id)}
+      />
+      {world?.challenge?.result && (
+        <ChallengeVerdict
+          world={world}
+          open={verdictSeen !== `${world.seed}:${world.challenge.id}`}
+          onClose={() => setVerdictSeen(`${world.seed}:${world.challenge!.id}`)}
+          onRetry={() => newIsland(world.challenge!.id)}
+          onPick={() => {
+            setVerdictSeen(`${world.seed}:${world.challenge!.id}`);
+            setPickChallenge(true);
+          }}
+        />
+      )}
+
       <AlertDialog open={confirmReset} onOpenChange={setConfirmReset}>
         <AlertDialogContent className="rounded-none border-2 border-ink bg-paper">
           <AlertDialogHeader>
@@ -580,7 +612,7 @@ function Index() {
             <AlertDialogCancel className="rounded-none">Keep it</AlertDialogCancel>
             <AlertDialogAction
               className="rounded-none bg-stamp text-paper hover:bg-stamp/90"
-              onClick={newIsland}
+              onClick={() => newIsland()}
             >
               New island
             </AlertDialogAction>
