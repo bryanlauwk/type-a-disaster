@@ -90,7 +90,7 @@ export function loadIsland(): WorldState | null {
     const snap = data.snapshot;
     if (
       snap &&
-      snap.version === 3 &&
+      snap.version === 4 &&
       snap.seed === saved.seed &&
       snap.day === saved.day &&
       Array.isArray(snap.tiles)

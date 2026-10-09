@@ -2,7 +2,7 @@ import { useState } from "react";
 import { totalOf } from "@/lib/island/ecology";
 import { SPECIES_DEFS, TRAIT_EFFECTS } from "@/lib/island/species";
 import { STAGES, TECH_COST, TECH_LABEL } from "@/lib/island/tribe";
-import { SPECIES, TECHS, type Chronicle, type Notice, type WorldState } from "@/lib/island/types";
+import { SPECIES, TECHS, type Chronicle, type Notice, type RegionId, type WorldState } from "@/lib/island/types";
 import { cn } from "@/lib/utils";
 import { FORM_CREDITS, SKIN_CREDITS } from "./dinoCredits";
 import { FORMS } from "./dinoForms";
@@ -56,8 +56,36 @@ function Entry({ c, fresh }: { c: Chronicle; fresh: boolean }) {
   );
 }
 
+/** A small population chart from the almanac's daily records. */
+function Spark({ data, color = "#8fb7c9" }: { data: number[]; color?: string }) {
+  if (data.length < 2) return null;
+  const max = Math.max(...data, 1);
+  const pts = data
+    .map((v, i) => `${((i / (data.length - 1)) * 100).toFixed(1)},${(28 - (v / max) * 26).toFixed(1)}`)
+    .join(" ");
+  return (
+    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="h-6 w-full" aria-hidden>
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}
+
 /** The tribe's story painted on the cave wall, plus the island almanac. */
-export function CaveWall({ world, telling }: { world: WorldState; telling: boolean }) {
+export function CaveWall({
+  world,
+  telling,
+  onLocate,
+}: {
+  world: WorldState;
+  telling: boolean;
+  onLocate?: (region: RegionId) => void;
+}) {
   const [tab, setTab] = useState<"wall" | "almanac">("wall");
   const entries = [...world.chronicle].reverse();
   const t = world.tribe;
@@ -112,14 +140,28 @@ export function CaveWall({ world, telling }: { world: WorldState; telling: boole
                 {world.notices
                   .slice(-14)
                   .reverse()
-                  .map((n, i) => (
-                    <li key={`${n.day}-${i}`} className="flex gap-2 text-[12px] leading-snug">
-                      <span className="w-9 shrink-0 font-mono text-[10px] text-[#e6d7b8]/40">
-                        d{n.day}
-                      </span>
-                      <span className={NOTICE_TONE[n.kind]}>{n.text}</span>
-                    </li>
-                  ))}
+                  .map((n, i) => {
+                    const body = (
+                      <>
+                        <span className="w-9 shrink-0 font-mono text-[10px] text-[#e6d7b8]/40">
+                          d{n.day}
+                        </span>
+                        <span className={NOTICE_TONE[n.kind]}>{n.text}</span>
+                      </>
+                    );
+                    if (!n.region || !onLocate) return <li key={`${n.day}-${i}`} className="flex gap-2 text-[12px] leading-snug">{body}</li>;
+                    return (
+                      <li key={`${n.day}-${i}`}>
+                        <button
+                          onClick={() => onLocate(n.region!)}
+                          title="Show me"
+                          className="flex w-full gap-2 text-left text-[12px] leading-snug hover:text-[#f1e4c8]"
+                        >
+                          {body}
+                        </button>
+                      </li>
+                    );
+                  })}
               </ul>
             </section>
           )}
@@ -150,6 +192,7 @@ export function CaveWall({ world, telling }: { world: WorldState; telling: boole
                       <span className="font-mono tabular-nums">{n ? n : "gone"}</span>
                     </div>
                     <p className="text-[12px] leading-snug text-[#e6d7b8]/65">{d.blurb}</p>
+                    <Spark data={world.history?.herds?.[sp] ?? []} />
                     {traits.length > 0 && (
                       <p className="mt-0.5 font-mono text-[10px] uppercase tracking-wider text-moss">
                         {traits.map((tr) => TRAIT_EFFECTS[tr].label).join(" · ")}
@@ -184,6 +227,12 @@ export function CaveWall({ world, telling }: { world: WorldState; telling: boole
                 {t.morale > 0.66 ? "High" : t.morale > 0.33 ? "Steady" : "Low"}
               </dd>
             </dl>
+            <div className="mt-1">
+              <Spark data={world.history?.tribe ?? []} color="#e8d38a" />
+              <p className="font-mono text-[9px] uppercase tracking-wider text-[#e6d7b8]/40">
+                The people, day by day
+              </p>
+            </div>
             <ul className="mt-3 flex flex-wrap gap-1">
               {TECHS.map((k) => (
                 <li

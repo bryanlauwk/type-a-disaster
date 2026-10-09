@@ -3,18 +3,23 @@ import {
   geography,
   growPlants,
   moveHerds,
+  naturalSelection,
   popIn,
+  seedOutbreak,
   addPop,
   regionFacts,
   seasonOf,
+  tickOutbreaks,
+  totalOf,
   wander,
 } from "./ecology";
 import { FAVOUR_MAX, POWER_DEFS, applyPower } from "./powers";
 import { rand, randInt } from "./rng";
-import { HERBIVORES, SPECIES_DEFS } from "./species";
+import { HERBIVORES, SPECIES_DEFS, TRAIT_EFFECTS } from "./species";
 import { STAGES, TECH_LABEL, foundCamp, tribeDay, wreck } from "./tribe";
 import { generateIsland } from "./worldgen";
 import {
+  HISTORY_MAX,
   RIVER,
   SIZE,
   SPECIES,
@@ -67,11 +72,18 @@ export function cloneWorld(p: WorldState): WorldState {
     actions: [...p.actions],
     chronicle: [...p.chronicle],
     notices: [...p.notices],
+    outbreaks: p.outbreaks.map((o) => ({ ...o })),
+    history: {
+      herds: Object.fromEntries(
+        Object.entries(p.history.herds).map(([k, v]) => [k, [...v]]),
+      ) as WorldState["history"]["herds"],
+      tribe: [...p.history.tribe],
+    },
   };
 }
 
-function notice(s: WorldState, text: string, kind: Notice["kind"]) {
-  s.notices.push({ day: s.day, text, kind });
+function notice(s: WorldState, text: string, kind: Notice["kind"], region?: RegionId) {
+  s.notices.push({ day: s.day, text, kind, region });
   if (s.notices.length > 80) s.notices.splice(0, s.notices.length - 80);
 }
 
@@ -103,7 +115,7 @@ export function tick(prev: WorldState): WorldState {
     const i = randInt(s, s.tiles.length);
     if (s.tiles[i].forest > 0.5 && !s.tiles[i].water) {
       s.tiles[i].fire = 3;
-      notice(s, `Lightning sets ${REGION_NAMES[s.tiles[i].region]} alight.`, "danger");
+      notice(s, `Lightning sets ${REGION_NAMES[s.tiles[i].region]} alight.`, "danger", s.tiles[i].region);
     }
   }
   // Lowland floods in heavy rain.
@@ -118,22 +130,19 @@ export function tick(prev: WorldState): WorldState {
       if (t.region !== "misty_wetlands" && !neighboursWater(s, i)) continue;
       t.flood = 2 + randInt(s, 2);
     }
-  // Sickness now and then.
+  // Sickness now and then: an outbreak that travels and burns out.
   if (rand(s) < 0.006) {
     const sp = HERBIVORES[randInt(s, HERBIVORES.length)];
     const regions = Object.keys(s.pop[sp]) as RegionId[];
     if (regions.length) {
       const r = regions[randInt(s, regions.length)];
-      if (!s.sanctuaries.includes(r)) {
-        const lost = popIn(s, sp, r) * 0.3;
-        addPop(s, sp, r, -lost);
-        if (lost >= 1)
-          notice(
-            s,
-            `A sickness runs through the ${SPECIES_DEFS[sp].plural} of ${REGION_NAMES[r]}.`,
-            "nature",
-          );
-      }
+      seedOutbreak(s, r, sp);
+      notice(
+        s,
+        `A sickness takes hold among the ${SPECIES_DEFS[sp].plural} of ${REGION_NAMES[r]}.`,
+        "nature",
+        r,
+      );
     }
   }
   // Pressure builds under the volcano.
@@ -148,6 +157,23 @@ export function tick(prev: WorldState): WorldState {
   growPlants(s);
   const facts = regionFacts(s, geo);
   feedAndBreed(s, geo, facts);
+  for (const ev of tickOutbreaks(s, geo)) {
+    if (ev.kind === "spread")
+      notice(
+        s,
+        `The sickness reaches the ${SPECIES_DEFS[ev.species].plural} of ${REGION_NAMES[ev.region]}.`,
+        "danger",
+        ev.region,
+      );
+    else if (ev.kind === "end")
+      notice(s, `The sickness has passed through the ${SPECIES_DEFS[ev.species].plural}.`, "nature");
+  }
+  for (const evo of naturalSelection(s, facts))
+    notice(
+      s,
+      `Pressure tells: the ${SPECIES_DEFS[evo.species].plural} are born ${TRAIT_EFFECTS[evo.trait].label.toLowerCase()}.`,
+      "discovery",
+    );
 
   const stage = s.tribe.stage;
   const techs = s.tribe.techs.length;
@@ -157,6 +183,7 @@ export function tick(prev: WorldState): WorldState {
       s,
       `${SPECIES_DEFS[report.raid.species].plural} got into the settlement. ${plural(report.raid.lost, "person", "people")} lost.`,
       "danger",
+      s.tiles[s.tribe.home].region,
     );
   if (report.found.fossil)
     notice(
@@ -193,6 +220,7 @@ export function tick(prev: WorldState): WorldState {
                 : ""
         }.`,
         "herd",
+        h.to,
       );
   let trampled = 0;
   moveHerds(s, (i) => {
@@ -212,6 +240,16 @@ export function tick(prev: WorldState): WorldState {
     if (total >= 0.5 && now < 0.5 && !s.herds.some((h) => h.species === sp))
       notice(s, `The last ${SPECIES_DEFS[sp].plural} are gone from the island.`, "nature");
   }
+
+  // The almanac keeps the last stretch of days for its graphs.
+  for (const sp of SPECIES) {
+    const h = s.history.herds[sp];
+    h.push(totalOf(s, sp));
+    if (h.length > HISTORY_MAX) h.splice(0, h.length - HISTORY_MAX);
+  }
+  s.history.tribe.push(s.tribe.pop);
+  if (s.history.tribe.length > HISTORY_MAX)
+    s.history.tribe.splice(0, s.history.tribe.length - HISTORY_MAX);
 
   s.favour = Math.min(FAVOUR_MAX, s.favour + 1);
   return s;

@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { hash } from "@/lib/island/rng";
 import { tx, ty, wx, wz, type ActionRecord, type Tile, type WorldState } from "@/lib/island/types";
 import { heightAt } from "./palette";
-import { lifeBus } from "./Dinos";
+import { lifeBus } from "./lifeBus";
 import { Puffs } from "./fx/vfx";
 import { TsunamiSpectacle, tsunamiPlan } from "./Tsunami";
 import { EruptionSpectacle, eruptionPlan } from "./Eruption";

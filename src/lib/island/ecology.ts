@@ -9,8 +9,10 @@ import {
   SPECIES,
   type Biome,
   type Herd,
+  type Outbreak,
   type RegionId,
   type SpeciesId,
+  type Trait,
   type WorldState,
 } from "./types";
 
@@ -105,8 +107,38 @@ export function growPlants(s: WorldState) {
   const drought = w.drought > 0;
   const lateDry = season === "dry" && s.day % YEAR > YEAR - 10;
   const burning: number[] = [];
+  // How much water the rivers carried into today, region by region.
+  const flowSum: Partial<Record<RegionId, number>> = {};
+  const flowN: Partial<Record<RegionId, number>> = {};
+  for (const t of s.tiles)
+    if (t.water === RIVER) {
+      flowSum[t.region] = (flowSum[t.region] ?? 0) + (t.flow ?? 1);
+      flowN[t.region] = (flowN[t.region] ?? 0) + 1;
+    }
+  const regionFlow: Partial<Record<RegionId, number>> = {};
+  for (const k of Object.keys(flowSum) as RegionId[])
+    regionFlow[k] = (flowSum[k] ?? 0) / (flowN[k] ?? 1);
   for (let i = 0; i < s.tiles.length; i++) {
     const t = s.tiles[i];
+    // Carcasses rot away.
+    if (t.carcass) {
+      t.carcass -= 0.07;
+      if (t.carcass <= 0.05) delete t.carcass;
+    }
+    // Rivers run low through a dry spell and swell again with the rain.
+    if (t.water === RIVER) {
+      const target =
+        w.rain > 0 || w.storm > 0
+          ? 1
+          : drought
+            ? 0.15
+            : season === "wet"
+              ? 1
+              : lateDry
+                ? 0.4
+                : 0.75;
+      t.flow = (t.flow ?? 1) + (target - (t.flow ?? 1)) * 0.12;
+    }
     // Ponds shrink away in a drought or at the end of the dry season.
     if (t.seasonal) t.water = drought || lateDry ? 0 : LAKE;
     if (t.water) {
@@ -133,6 +165,9 @@ export function growPlants(s: WorldState) {
     else cap *= 0.85;
     if (drought) cap *= t.water || around(i).some((n) => s.tiles[n].water === RIVER) ? 0.8 : 0.45;
     if (w.ash > 0) cap *= 0.6;
+    // The marshes thin out when the rivers that feed them run low.
+    if (t.biome === "wetland" || t.biome === "mangrove")
+      cap *= 0.55 + 0.45 * (regionFlow[t.region] ?? 1);
     if (t.flood > 0) {
       t.flood -= 1;
       cap *= 0.5;
@@ -213,6 +248,10 @@ interface RegionFacts {
   built: number;
   fish: number;
   nests: boolean;
+  /** Food lying on carcasses in the region. */
+  carcass: number;
+  /** Average river flow (0–1); regions without rivers read 1. */
+  flow: number;
   /** How hungry each hunter species is here (0 fed – 1 starving). */
   hunger: Partial<Record<SpeciesId, number>>;
 }
@@ -230,6 +269,9 @@ export function regionFacts(s: WorldState, geo: Geography): Record<RegionId, Reg
     let fish = 0;
     let land = 0;
     let nests = false;
+    let carcass = 0;
+    let flowSum = 0;
+    let flowN = 0;
     for (const i of geo.tiles[r]) {
       const t = s.tiles[i];
       if (t.landmark === "nesting_grounds") nests = true;
@@ -241,6 +283,11 @@ export function regionFacts(s: WorldState, geo: Geography): Record<RegionId, Reg
       else {
         land += 1;
         food += t.veg;
+      }
+      carcass += t.carcass ?? 0;
+      if (t.water === RIVER) {
+        flowSum += t.flow ?? 1;
+        flowN += 1;
       }
       if (t.fire > 0 || t.lava > 0) burning += 1;
       if (t.build) {
@@ -261,6 +308,8 @@ export function regionFacts(s: WorldState, geo: Geography): Record<RegionId, Reg
       built,
       fish,
       nests,
+      carcass,
+      flow: flowN ? flowSum / flowN : 1,
       hunger: {},
     };
   }
@@ -304,19 +353,22 @@ export function feedAndBreed(s: WorldState, geo: Geography, facts: Record<Region
       setPop(s, sp, r, n + births - deaths);
     }
 
-    // Snappers: small, quick, living on scraps and insects.
+    // Snappers: small, quick, living on scraps and whatever the hunters leave.
     {
       const n = popIn(s, "snapper", r);
       if (n) {
         const def = SPECIES_DEFS.snapper;
         const t = tuned(def, s.traits.snapper);
         const suit = def.habitat[r] ?? 0.05;
-        const cap = suit * 45 * (f.food / (f.food + 40));
+        const cap = suit * 45 * (f.food / (f.food + 40)) + f.carcass * 12;
+        const wellFed = 1 + Math.min(1.2, f.carcass * 0.4);
         setPop(
           s,
           "snapper",
           r,
-          n + t.birth * n * Math.max(0, 1 - n / Math.max(1, cap)) * BREED[season] - t.death * n,
+          n +
+            t.birth * wellFed * n * Math.max(0, 1 - n / Math.max(1, cap)) * BREED[season] -
+            t.death * n,
         );
       }
     }
@@ -341,10 +393,18 @@ export function feedAndBreed(s: WorldState, geo: Geography, facts: Record<Region
       }
       const avail = targets.reduce((a, x) => a + x[2], 0);
       const kills = t.attack * n * (avail / (avail + 6)) * (sanctuary ? 0.7 : 1);
-      for (const [p, g, w] of targets) addPop(s, p, g, -kills * (w / avail));
+      for (const [p, g, w] of targets) {
+        const share = kills * (w / avail);
+        addPop(s, p, g, -share);
+        // What the pack doesn't eat stays behind for the scavengers.
+        const at = geo.centre[g];
+        s.tiles[at].carcass = Math.min(4, (s.tiles[at].carcass ?? 0) + share * 0.45);
+      }
       const suit = def.habitat[r] ?? 0.05;
       const need = n * t.attack * 0.45;
-      const hungry = need > 0 ? Math.max(0, 1 - kills / need) : 0;
+      const starving = need > 0 ? Math.max(0, 1 - kills / need) : 0;
+      // A carcass to squabble over takes the edge off.
+      const hungry = Math.max(0, starving - Math.min(0.8, f.carcass * 0.25));
       f.hunger[sp] = hungry;
       // Hunters hold territories: a region only has room for so many.
       const room = Math.max(
@@ -423,7 +483,7 @@ function appeal(
     );
     a *= Math.min(2, prey / 20);
   }
-  if (s.weather.drought > 0) a *= 0.4 + f.water * 3;
+  if (s.weather.drought > 0 || f.flow < 0.35) a *= 0.4 + f.water * 3;
   // The tribe's fires and walls.
   a *= 1 / (1 + f.pits * 0.35 + f.fences * 0.05 + f.built * 0.02);
   return a;
@@ -481,11 +541,12 @@ export function wander(s: WorldState, geo: Geography, facts: Record<RegionId, Re
       const f = facts[r];
       const diet = SPECIES_DEFS[sp].diet;
       const hungry = diet === "plants" ? 1 - f.fed : diet === "meat" ? (f.hunger[sp] ?? 0) : 0;
+      const thirsty = s.weather.drought > 0 || f.flow < 0.35;
       const pressure =
         hungry +
         f.burning * 3 +
         (here < 0.15 ? 0.4 : 0) +
-        (s.weather.drought > 0 && f.water < 0.02 ? 0.3 : 0);
+        (thirsty && f.water < 0.02 ? 0.35 : 0);
       if (pressure < 0.3 || rand(s) > 0.5) continue;
       // The best neighbouring region, if it's clearly better.
       let best: RegionId | null = null;
@@ -540,6 +601,99 @@ export function moveHerds(s: WorldState, onTrample: (tile: number, sp: SpeciesId
     else still.push(h);
   }
   s.herds = still;
+}
+
+// ---------------------------------------------------------------------------
+// Pressure, sickness and the slow work of selection
+// ---------------------------------------------------------------------------
+
+export interface Evolution {
+  species: SpeciesId;
+  trait: Trait;
+  pressure: "starvation" | "hunting";
+}
+
+/**
+ * Life under pressure changes: a species that goes hungry or is hunted day
+ * after day slowly drifts towards traits that answer that pressure.
+ */
+export function naturalSelection(
+  s: WorldState,
+  facts: Record<RegionId, RegionFacts>,
+): Evolution[] {
+  const out: Evolution[] = [];
+  for (const sp of SPECIES) {
+    if (s.traits[sp].length >= 3) continue;
+    const def = SPECIES_DEFS[sp];
+    if (totalOf(s, sp) < 6) continue;
+    let pressure = 0;
+    let regions = 0;
+    for (const r of Object.keys(s.pop[sp]) as RegionId[]) {
+      const f = facts[r];
+      if (!f) continue;
+      pressure += def.diet === "plants" || def.diet === "omnivore" ? 1 - f.fed : (f.hunger[sp] ?? 0);
+      regions++;
+    }
+    if (!regions) continue;
+    pressure /= regions;
+    if (pressure < 0.45 || rand(s) > 0.012 * pressure) continue;
+    // The hungry harden or breed faster; the hunted get swift or armoured.
+    const pool: Trait[] =
+      def.diet === "meat"
+        ? ["swift", "cunning", "fertile", "hardy"]
+        : ["hardy", "fertile", "giant", "swift", "armoured"];
+    const fresh = pool.filter((t) => !s.traits[sp].includes(t));
+    if (!fresh.length) continue;
+    const trait = fresh[randInt(s, fresh.length)];
+    s.traits[sp].push(trait);
+    out.push({ species: sp, trait, pressure: def.diet === "meat" ? "hunting" : "starvation" });
+  }
+  return out;
+}
+
+export interface OutbreakEvent {
+  kind: "start" | "spread" | "end";
+  region: RegionId;
+  species: SpeciesId;
+}
+
+/** A sickness takes hold in a region. */
+export function seedOutbreak(s: WorldState, region: RegionId, species: SpeciesId): OutbreakEvent {
+  s.outbreaks.push({ region, days: 5 + randInt(s, 4), species });
+  return { kind: "start", region, species };
+}
+
+/** One day of sickness: losses, carcasses, and spread along the herd routes. */
+export function tickOutbreaks(s: WorldState, geo: Geography): OutbreakEvent[] {
+  const events: OutbreakEvent[] = [];
+  const fresh: Outbreak[] = [];
+  const active = new Set(s.outbreaks.map((o) => `${o.region}:${o.species}`));
+  const still: Outbreak[] = [];
+  for (const o of s.outbreaks) {
+    const n = popIn(s, o.species, o.region);
+    if (n > 0.5 && o.days > 0) {
+      // Hardy animals shrug it off sooner.
+      const starve = tuned(SPECIES_DEFS[o.species], s.traits[o.species]).starve;
+      const lost = n * 0.11 * starve;
+      addPop(s, o.species, o.region, -lost);
+      const at = geo.centre[o.region];
+      s.tiles[at].carcass = Math.min(4, (s.tiles[at].carcass ?? 0) + lost * 0.3);
+      // Crowded herds carry it to the neighbours.
+      if (rand(s) < 0.1 + Math.min(0.1, n / 80))
+        for (const nb of geo.neighbours[o.region]) {
+          if (active.has(`${nb}:${o.species}`)) continue;
+          if (popIn(s, o.species, nb) < 3) continue;
+          active.add(`${nb}:${o.species}`);
+          fresh.push({ region: nb, days: 4 + randInt(s, 4), species: o.species });
+          events.push({ kind: "spread", region: nb, species: o.species });
+          break;
+        }
+      o.days -= 1;
+      still.push(o);
+    } else events.push({ kind: "end", region: o.region, species: o.species });
+  }
+  s.outbreaks = [...still, ...fresh];
+  return events;
 }
 
 export { geography };

@@ -102,6 +102,60 @@ describe("god powers", () => {
   });
 });
 
+describe("the deeper island", () => {
+  test("disasters leave carcasses, and they rot", () => {
+    const base = run(createWorld(5), 5);
+    const after = act(
+      { ...base, favour: 30 },
+      { power: "meteor", tile: base.tiles.findIndex((t) => t.region === "emerald_grasslands") },
+    );
+    const at = after.tiles.findIndex((t) => (t.carcass ?? 0) > 0);
+    expect(at).toBeGreaterThanOrEqual(0);
+    const start = after.tiles[at].carcass!;
+    const later = run(after, 60);
+    expect(later.tiles[at].carcass ?? 0).toBeLessThan(start);
+  });
+
+  test("drought shrinks the rivers and rain refills them", () => {
+    let s = run(createWorld(9), 10);
+    s = { ...s, weather: { rain: 0, drought: 9, storm: 0, ash: 0 } };
+    s = run(s, 12);
+    const rivers = s.tiles.filter((t) => t.water === 1);
+    expect(rivers.length).toBeGreaterThan(40);
+    expect(rivers.every((t) => (t.flow ?? 1) < 0.6)).toBe(true);
+    s = { ...s, weather: { rain: 7, drought: 0, storm: 0, ash: 0 } };
+    s = run(s, 7);
+    expect(s.tiles.filter((t) => t.water === 1).every((t) => (t.flow ?? 1) > 0.6)).toBe(true);
+  });
+
+  test("plague starts an outbreak that burns out", () => {
+    const base = run(createWorld(4), 10);
+    const after = act(
+      { ...base, favour: 30 },
+      { power: "plague", tile: base.tiles.findIndex((t) => t.region === "emerald_grasslands") },
+    );
+    expect(after.outbreaks.length).toBeGreaterThan(0);
+    const later = run(after, 60);
+    expect(later.outbreaks.length).toBe(0);
+    for (const sp of SPECIES) expect(Number.isFinite(totalOf(later, sp))).toBe(true);
+  });
+
+  test("pressure breeds traits, bounded at three", () => {
+    const s = run(createWorld(6), 250);
+    for (const sp of SPECIES) {
+      expect(s.traits[sp].length).toBeLessThanOrEqual(3);
+      for (const t of s.traits[sp])
+        expect(["giant", "swift", "hardy", "fertile", "cunning", "armoured"]).toContain(t);
+    }
+  });
+
+  test("the almanac keeps the last 180 days", () => {
+    const s = run(createWorld(13), 200);
+    for (const sp of SPECIES) expect(s.history.herds[sp].length).toBe(180);
+    expect(s.history.tribe.length).toBe(180);
+  });
+});
+
 describe("replay and saving", () => {
   let s = createWorld(21);
   s = run(s, 4);

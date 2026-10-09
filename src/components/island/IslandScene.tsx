@@ -5,13 +5,22 @@ import * as THREE from "three";
 import { seasonOf } from "@/lib/island/sim";
 import { geography } from "@/lib/island/terrain";
 import { LANDMARK_NAMES, REGION_TITLES } from "@/lib/island/names";
-import { HALF, wx, wz, type RegionId, type WorldState } from "@/lib/island/types";
+import {
+  HALF,
+  wx,
+  wz,
+  type RegionId,
+  type SpeciesId,
+  type Tile,
+  type WorldState,
+} from "@/lib/island/types";
 import { IslandSky } from "./IslandSky";
 import { Terrain } from "./Terrain";
 import { FreshWater, Lava, Sea, Waterfalls } from "./Waters";
 import { Vegetation } from "./Vegetation";
 import { Landmarks } from "./Landmarks";
-import { Dinos, lifeBus } from "./Dinos";
+import { lifeBus } from "./lifeBus";
+import { Dinos } from "./Dinos";
 import { People, Structures } from "./Settlement";
 import {
   ActCamera,
@@ -73,6 +82,10 @@ export interface IslandSceneProps {
   onActDone?: () => void;
   /** Show the island as the park map: dark blue, contours, glowing zones. */
   mapView?: boolean;
+  /** Keep the camera locked on a species (the Follow button). */
+  follow?: SpeciesId | null;
+  /** Fly the camera to a tile; changing `stamp` triggers the flight. */
+  focus?: { tile: number; stamp: number } | null;
 }
 
 /**
@@ -187,6 +200,84 @@ function LookAt({ sp }: { sp: string }) {
   return null;
 }
 
+/** Flies the camera over to a tile when a notice or an almanac entry is tapped. */
+function FocusOn({ focus }: { focus: IslandSceneProps["focus"] }) {
+  const controls = useThree((st) => st.controls) as unknown as {
+    target: THREE.Vector3;
+    update: () => void;
+  } | null;
+  const camera = useThree((st) => st.camera);
+  const fly = useRef<{
+    k: number;
+    fromP: THREE.Vector3;
+    fromT: THREE.Vector3;
+    toP: THREE.Vector3;
+    toT: THREE.Vector3;
+  } | null>(null);
+  const seen = useRef(-1);
+  useEffect(() => {
+    if (!controls || !focus || focus.stamp === seen.current) return;
+    seen.current = focus.stamp;
+    const toT = new THREE.Vector3(wx(focus.tile), 1.5, wz(focus.tile));
+    const offset = camera.position.clone().sub(controls.target);
+    offset.setLength(Math.min(offset.length(), 55));
+    fly.current = {
+      k: 0,
+      fromP: camera.position.clone(),
+      fromT: controls.target.clone(),
+      toP: toT.clone().add(offset),
+      toT,
+    };
+  }, [focus, controls, camera]);
+  useFrame((_, dt) => {
+    const f = fly.current;
+    if (!f || !controls) return;
+    f.k = Math.min(1, f.k + dt / 1.2);
+    const e = f.k * f.k * (3 - 2 * f.k);
+    camera.position.lerpVectors(f.fromP, f.toP, e);
+    controls.target.lerpVectors(f.fromT, f.toT, e);
+    controls.update();
+    if (f.k >= 1) fly.current = null;
+  });
+  return null;
+}
+
+/** Bones on tiles where kills or disasters left a carcass. */
+function Carcasses({ tiles }: { tiles: Tile[] }) {
+  const list = useMemo(() => {
+    const out: { x: number; y: number; z: number; s: number; r: number }[] = [];
+    tiles.forEach((t, i) => {
+      if (!t.carcass || t.water) return;
+      const x = wx(i);
+      const z = wz(i);
+      out.push({
+        x,
+        y: Math.max(0, heightAt(tiles, x, z)) + 0.1,
+        z,
+        s: Math.min(1.8, 0.7 + t.carcass * 0.4),
+        r: i,
+      });
+    });
+    return out;
+  }, [tiles]);
+  if (!list.length) return null;
+  return (
+    <group>
+      {list.map((c, i) => (
+        <mesh
+          key={i}
+          position={[c.x, c.y, c.z]}
+          rotation={[-Math.PI / 2.2, (c.r % 7) * 0.9, (c.r % 5) * 1.1]}
+          scale={[c.s, c.s * 0.35, c.s * 0.55]}
+        >
+          <dodecahedronGeometry args={[0.5, 0]} />
+          <meshStandardMaterial color="#cfc5ab" roughness={0.95} />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
 /** A glowing ring on the ground where a power would land. */
 function CursorRing({ cursor, world }: { cursor: Cursor; world: WorldState }) {
   const ref = useRef<THREE.Mesh>(null);
@@ -224,6 +315,8 @@ function IslandScene({
   onReveal,
   onActDone,
   mapView = false,
+  follow = null,
+  focus = null,
 }: IslandSceneProps) {
   const small = typeof window !== "undefined" && window.innerWidth < 640;
   const [fx, setFx] = useState(
@@ -368,6 +461,7 @@ function IslandScene({
           <People world={world} />
           <Dinos world={world} getPhase={getPhase} />
           <TileFires tiles={world.tiles} />
+          <Carcasses tiles={world.tiles} />
           <Zones tiles={world.tiles} show={showLabels} />
           <Surroundings tiles={world.tiles} seed={world.seed} />
           <PropField placements={nature} />
@@ -388,6 +482,7 @@ function IslandScene({
         {cursor && <CursorRing cursor={cursor} world={world} />}
         <ActCamera run={act ?? null} />
         {lookAt && <LookAt sp={lookAt} />}
+        {follow && <LookAt sp={follow} />}
         {camSpec && <DebugCamera spec={camSpec} />}
         <OrbitControls
           makeDefault
@@ -401,6 +496,7 @@ function IslandScene({
         />
         <CameraBounds />
         <MapMode on={mapView} />
+        <FocusOn focus={focus} />
         <LabelProjector specs={baseLabels} registry={registry} />
         {fx && <PostFX />}
         {fx && watchFps && (
