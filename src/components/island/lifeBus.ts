@@ -16,6 +16,11 @@ export interface BusAgent {
   state: string;
   form: number;
   young: boolean;
+  /** Live movement and condition shown by the animal inspector. */
+  speed: number;
+  fatigue: number;
+  intent: string;
+  alertness: "calm" | "watchful" | "alarmed";
   /** Seconds since death (the renderer uses it to sink the body away). */
   deadFor?: number;
 }
@@ -27,6 +32,8 @@ export interface BusAgent {
 export const lifeBus = {
   hunters: [] as { x: number; z: number; danger: number }[],
   agents: [] as BusAgent[],
+  /** Individual currently held by follow camera; the UI owns this value. */
+  followedId: null as number | null,
   /** Scripted runs for acts: a stampeding herd, a raiding pack. */
   runs: [] as {
     sp: SpeciesId;

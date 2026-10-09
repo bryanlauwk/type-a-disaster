@@ -82,8 +82,8 @@ export interface IslandSceneProps {
   onActDone?: () => void;
   /** Show the island as the park map: dark blue, contours, glowing zones. */
   mapView?: boolean;
-  /** Keep the camera locked on a species (the Follow button). */
-  follow?: SpeciesId | null;
+  /** Keep the camera locked on one living animal (the Follow button). */
+  follow?: number | null;
   /** Fly the camera to a tile; changing `stamp` triggers the flight. */
   focus?: { tile: number; stamp: number } | null;
 }
@@ -179,7 +179,7 @@ function DebugCamera({ spec }: { spec: string }) {
   return null;
 }
 
-function LookAt({ sp }: { sp: string }) {
+function LookAt({ sp, id }: { sp?: string; id?: number }) {
   const controls = useThree((st) => st.controls) as unknown as {
     target: THREE.Vector3;
     update: () => void;
@@ -187,8 +187,10 @@ function LookAt({ sp }: { sp: string }) {
   const camera = useThree((st) => st.camera);
   const dist = Number(new URLSearchParams(window.location.search).get("dist") || 0);
   useFrame(() => {
-    const a = lifeBus.agents.find(
-      (o) => (o.sp === sp || FORMS[o.sp][o.form].key === sp) && o.state !== "dead" && !o.young,
+    const a = lifeBus.agents.find((o) =>
+      id !== undefined
+        ? o.id === id && o.state !== "dead"
+        : (o.sp === sp || FORMS[o.sp][o.form].key === sp) && o.state !== "dead" && !o.young,
     );
     if (!a || !controls) return;
     const d = dist || 6;
@@ -482,7 +484,7 @@ function IslandScene({
         {cursor && <CursorRing cursor={cursor} world={world} />}
         <ActCamera run={act ?? null} />
         {lookAt && <LookAt sp={lookAt} />}
-        {follow && <LookAt sp={follow} />}
+        {follow !== null && <LookAt id={follow} />}
         {camSpec && <DebugCamera spec={camSpec} />}
         <OrbitControls
           makeDefault
