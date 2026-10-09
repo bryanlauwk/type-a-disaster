@@ -1283,7 +1283,18 @@ export function Dinos({ world, getPhase }: { world: WorldState; getPhase: () => 
         const min = (la + lb) * 0.28;
         if (Math.abs(ddx) > min || Math.abs(ddz) > min) continue;
         const d = Math.hypot(ddx, ddz);
-        if (d >= min || d < 1e-4) continue;
+        if (d < 1e-4) continue;
+        const sameHerd = !!a.group && a.group === b.group;
+        if (sameHerd && d < min * 2.2) {
+          // A gentle anticipatory steer opens a lane before bodies touch. It
+          // keeps the stable herd layout while removing formation-like clumps.
+          const soft = (1 - d / (min * 2.2)) * Math.min(0.12, dt * 0.8);
+          a.tx -= (ddx / d) * soft * min;
+          a.tz -= (ddz / d) * soft * min;
+          b.tx += (ddx / d) * soft * min;
+          b.tz += (ddz / d) * soft * min;
+        }
+        if (d >= min) continue;
         // The lighter animal gives way more.
         const push = ((min - d) / d) * Math.min(1, dt * 6);
         const wa = lb / (la + lb);
